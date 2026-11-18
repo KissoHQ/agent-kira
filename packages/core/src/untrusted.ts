@@ -1,13 +1,10 @@
 // Wraps text written by someone outside the system in a tag, so a model can tell it apart from its
-// instructions. Tags of the same name inside the text are removed until none is left, since removing
-// one can join the pieces of another, so the text cannot close the wrapper early.
+// instructions. Tags of the same name inside the text are removed, and the opening bracket of any
+// tag that the removal joins back together is escaped, so the text cannot close the wrapper early.
+// Both are single passes: the time grows with the length of the text, whatever it contains.
 export function wrapUntrusted(text: string, tag = "message"): string {
-  const pattern = new RegExp(`</?${tag}\\b[^>]*>`, "gi");
-  let content = text;
-  let previous;
-  do {
-    previous = content;
-    content = content.replaceAll(pattern, "");
-  } while (content !== previous);
+  const tags = new RegExp(`</?${tag}\\b[^<>]*>`, "gi");
+  const rebuilt = new RegExp(`<(?=/?${tag}\\b)`, "gi");
+  const content = text.replaceAll(tags, "").replaceAll(rebuilt, "&lt;");
   return `<${tag}>\n${content}\n</${tag}>`;
 }

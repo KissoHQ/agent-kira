@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, max } from "drizzle-orm";
 
 import type { Database } from "../db/client.ts";
 import { attachments, conversations, events, messages, requests } from "../db/schema.ts";
@@ -87,21 +87,32 @@ export async function readConversation(
 }
 
 // The sender of the first message of a conversation, and what its channel kept with it, so a
-// reply in the same conversation keeps the same person.
+// reply in the same conversation keeps the same person; with the time of its last message, so a
+// conversation left alone for long can be closed.
 export async function conversationOrigin(
   db: Database,
   channel: Channel,
   externalId: string,
-): Promise<{ sender: string; raw: unknown } | undefined> {
+): Promise<{ sender: string; raw: unknown; lastMessageAt: Date } | undefined> {
   const conversationId = await findConversation(db, channel, externalId);
   if (conversationId === undefined) {
     return undefined;
   }
-  const [first] = await db
-    .select({ sender: messages.sender, raw: messages.raw })
-    .from(messages)
-    .where(and(eq(messages.conversationId, conversationId), eq(messages.direction, "INBOUND")))
-    .orderBy(asc(messages.sentAt), asc(messages.id))
-    .limit(1);
-  return first;
+  const inConversation = eq(messages.conversationId, conversationId);
+  const [[first], [last]] = await Promise.all([
+    db
+      .select({ sender: messages.sender, raw: messages.raw })
+      .from(messages)
+      .where(and(inConversation, eq(messages.direction, "INBOUND")))
+      .orderBy(asc(messages.sentAt), asc(messages.id))
+      .limit(1),
+    db
+      .select({ at: max(messages.sentAt) })
+      .from(messages)
+      .where(inConversation),
+  ]);
+  if (first === undefined || last?.at == null) {
+    return undefined;
+  }
+  return { ...first, lastMessageAt: last.at };
 }

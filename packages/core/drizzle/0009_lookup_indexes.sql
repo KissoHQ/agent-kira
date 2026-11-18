@@ -1,0 +1,2 @@
+CREATE INDEX "events_message_id_idx" ON "events" USING btree ("message_id");--> statement-breakpoint
+CREATE INDEX "requests_duplicate_of_request_id_idx" ON "requests" USING btree ("duplicate_of_request_id");

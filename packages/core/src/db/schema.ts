@@ -211,6 +211,8 @@ export const requests = pgTable(
     check("requests_confidence_range", sql`${t.confidence} between 0 and 1`),
     check("requests_not_duplicate_of_itself", sql`${t.duplicateOfRequestId} <> ${t.id}`),
     index("requests_project_id_idx").on(t.projectId),
+    // The page of a request lists the requests marked as its duplicates.
+    index("requests_duplicate_of_request_id_idx").on(t.duplicateOfRequestId),
     index("requests_requester_contact_id_idx").on(t.requesterContactId),
     index("requests_status_idx").on(t.status),
     index("requests_needs_review_idx")
@@ -300,7 +302,11 @@ export const events = pgTable(
     data: jsonb("data").notNull().default({}),
     createdAt: createdAt(),
   },
-  (t) => [index("events_request_id_created_at_idx").on(t.requestId, t.createdAt)],
+  (t) => [
+    index("events_request_id_created_at_idx").on(t.requestId, t.createdAt),
+    // The widget and the agent look up the events of a message, such as the request it created.
+    index("events_message_id_idx").on(t.messageId),
+  ],
 );
 
 // A member of the team who signs in to the web interface. The account belongs to a contact, so

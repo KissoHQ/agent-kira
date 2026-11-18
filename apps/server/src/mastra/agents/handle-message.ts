@@ -46,6 +46,10 @@ export interface HandlingSettings {
   reviewThreshold: number;
   // Help articles closest to a question, among the projects of the sender.
   searchKnowledge: (actor: ClassifiedTurn["actor"], question: string) => Promise<KnowledgeHit[]>;
+  // Longest run of the agent on one message, all its calls included. A model that stops answering
+  // would otherwise hold the queue of its channel forever; the message is then retried, and filed
+  // for a person after the last attempt.
+  agentTimeoutMs: number;
 }
 
 export interface HandledMessage {
@@ -217,6 +221,7 @@ export async function handleMessage(
     stopWhen: () => askedForDetails(outcomes),
     outputProcessors: [createAnswerCheck(() => answerContext(system, turn.messageText, outcomes))],
     maxProcessorRetries: maxAnswerRetries,
+    abortSignal: AbortSignal.timeout(settings.agentTimeoutMs),
   });
 
   const answer = finalAnswer(result);

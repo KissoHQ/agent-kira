@@ -60,6 +60,32 @@ const origin = z
   .url()
   .refine((value) => new URL(value).origin === value, { message: "Must be an origin only" });
 
+const projectKey = /^[A-Z][A-Z0-9]{1,9}$/;
+const minSecretLength = 32;
+
+// "PORTAL=secret,SHOP=other-secret" as a map from project key to secret.
+function parseIdentitySecrets(
+  value: string,
+  context: z.RefinementCtx,
+): ReadonlyMap<string, string> {
+  const secrets = new Map<string, string>();
+  for (const entry of value.split(",").filter((item) => item.trim() !== "")) {
+    const separator = entry.indexOf("=");
+    const key = entry.slice(0, Math.max(separator, 0)).trim().toUpperCase();
+    const secret = entry.slice(separator + 1).trim();
+    if (separator < 0 || !projectKey.test(key)) {
+      context.addIssue({ code: "custom", message: "Each entry must be PROJECT=secret" });
+    } else if (secret.length < minSecretLength) {
+      context.addIssue({ code: "custom", message: `The secret of ${key} is too short` });
+    } else if (secrets.has(key)) {
+      context.addIssue({ code: "custom", message: `${key} is given twice` });
+    } else {
+      secrets.set(key, secret);
+    }
+  }
+  return secrets;
+}
+
 // The widget is optional, like Slack and email: without the origins of the applications that
 // embed it, the server runs without it.
 const widgetEnvSchema = z.object({
@@ -67,11 +93,12 @@ const widgetEnvSchema = z.object({
     .string()
     .transform((value) => value.split(",").map((item) => item.trim()))
     .pipe(z.array(origin).min(1)),
-  // Shared with the applications, which sign the identity of the person signed in. Optional:
-  // without it, every person who writes through the widget is unverified.
-  WIDGET_IDENTITY_SECRET: z.preprocess(
-    (value) => (value === "" ? undefined : value),
-    z.string().min(32, "Must be at least 32 characters").optional(),
+  // One secret per project, shared with the application of that project only, which signs the
+  // identity of the person signed in: "PORTAL=secret,SHOP=other-secret". Optional: without it,
+  // every person who writes through the widget is unverified.
+  WIDGET_IDENTITY_SECRETS: z.preprocess(
+    (value) => (value === "" || value === undefined ? "" : value),
+    z.string().transform(parseIdentitySecrets),
   ),
   ATTACHMENTS_DIR: z.string().refine(isAbsolute, { message: "Must be an absolute path" }),
 });

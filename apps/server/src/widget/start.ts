@@ -44,15 +44,15 @@ export async function startWidgetIfConfigured(
     logger.info("The widget is not configured: set WIDGET_ALLOWED_ORIGINS and ATTACHMENTS_DIR");
     return false;
   }
-  if (env.WIDGET_IDENTITY_SECRET === undefined) {
-    logger.warn("WIDGET_IDENTITY_SECRET is not set: every person of the widget is unverified");
+  if (env.WIDGET_IDENTITY_SECRETS.size === 0) {
+    logger.warn("WIDGET_IDENTITY_SECRETS is not set: every person of the widget is unverified");
   }
   const { db, handle } = handler();
   const started = await createWidgetApp({
     db,
     handle,
     allowedOrigins: env.WIDGET_ALLOWED_ORIGINS,
-    identitySecret: env.WIDGET_IDENTITY_SECRET,
+    identitySecrets: env.WIDGET_IDENTITY_SECRETS,
     attachmentsDir: env.ATTACHMENTS_DIR,
     logger: {
       info: (message) => {

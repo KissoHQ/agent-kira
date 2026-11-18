@@ -46,7 +46,7 @@ async function widgetFor(handle?: (input: TurnInput) => Promise<HandledMessage>)
         return Promise.resolve({ reply: answer, filedBySystem: false });
       }),
     allowedOrigins: [portal],
-    identitySecret: secret,
+    identitySecrets: new Map([["PORTAL", secret]]),
     attachmentsDir: folder,
     logger: { info: () => undefined, error: () => undefined },
     retryDelaysMs: [0, 0],
@@ -65,10 +65,12 @@ function newMessage(fields: Record<string, string>, files: File[] = []) {
   return { method: "POST", body: form, headers: { origin: portal } };
 }
 
+// What the portal application gives the widget for the person signed in.
 function signed(email = bruno) {
-  const identity = signIdentity(secret, email, new Date());
+  const identity = signIdentity(secret, email, "PORTAL", new Date());
   return {
     email: identity.email,
+    project: identity.project,
     expires: String(identity.expires),
     signature: identity.signature,
   };
@@ -98,7 +100,7 @@ describe("the widget channel", () => {
     const response = await widget.app.request(
       "/widget/messages",
       newMessage(
-        { kind: "BUG", text: "Le bouton Valider ne répond plus.", project: "portal", ...signed() },
+        { kind: "BUG", text: "Le bouton Valider ne répond plus.", ...signed(), project: "portal" },
         [new File([png], "capture.png", { type: "image/png" })],
       ),
     );
@@ -211,6 +213,10 @@ describe("the widget channel", () => {
       { email: bruno },
       { ...signed(), email: "alice.martin@acme.example" },
       { ...signed(), signature: "0".repeat(64) },
+      // Signed by the portal, but Alice does not work on the portal.
+      signed("alice.martin@acme.example"),
+      // A signature for the portal sent to another project.
+      { ...signed(), project: "SHOP" },
     ]) {
       // One after the other, so the agent receives them in this order.
       // oxlint-disable-next-line no-await-in-loop
@@ -225,6 +231,8 @@ describe("the widget channel", () => {
       "UNVERIFIED",
       "UNVERIFIED",
       "UNVERIFIED",
+      "UNVERIFIED",
+      "UNVERIFIED",
     ]);
   });
 
@@ -233,14 +241,14 @@ describe("the widget channel", () => {
     const token = await conversationOf(
       await widget.app.request(
         "/widget/messages",
-        newMessage({ kind: "BUG", text: "Panne", project: "PORTAL", ...signed() }),
+        newMessage({ kind: "BUG", text: "Panne", ...signed() }),
       ),
     );
     await widget.idle();
 
     const response = await widget.app.request(
       `/widget/conversations/${token}/messages`,
-      newMessage({ text: "Toujours en panne", email: "someone@else.example" }),
+      newMessage({ text: "Toujours en panne", ...signed(), email: "someone@else.example" }),
     );
     await widget.idle();
 
@@ -248,6 +256,26 @@ describe("the widget channel", () => {
     expect(widget.inputs.at(-1)).toMatchObject({ trust: "VERIFIED", channelAddress: "PORTAL" });
     const replies = await getDatabase().select({ sender: messages.sender }).from(messages);
     expect(replies.filter((row) => row.sender === bruno)).toHaveLength(2);
+  });
+
+  it("treats a reply without the signature of the person as unverified", async () => {
+    const widget = await widgetFor();
+    const token = await conversationOf(
+      await widget.app.request(
+        "/widget/messages",
+        newMessage({ kind: "BUG", text: "Panne", ...signed() }),
+      ),
+    );
+    await widget.idle();
+
+    // Someone else on the same computer, who found the conversation in the browser.
+    await widget.app.request(
+      `/widget/conversations/${token}/messages`,
+      newMessage({ text: "Annulez tout" }),
+    );
+    await widget.idle();
+
+    expect(widget.inputs.map((input) => input.trust)).toEqual(["VERIFIED", "UNVERIFIED"]);
   });
 
   it("refuses an incomplete message or a file of another type, and stores nothing", async () => {

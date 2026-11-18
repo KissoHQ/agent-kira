@@ -2,41 +2,58 @@ import { describe, expect, it } from "vitest";
 
 import { maxIdentityLifetimeSeconds, signIdentity, verifyIdentity } from "./identity";
 
-const secret = "a-secret-shared-with-the-application";
+const portalSecret = "a-secret-shared-with-the-portal-application";
+const shopSecret = "a-secret-shared-with-the-shop-application";
+const secrets = new Map([
+  ["PORTAL", portalSecret],
+  ["SHOP", shopSecret],
+]);
 const now = new Date("2026-10-31T09:00:00Z");
 const later = (seconds: number) => new Date(now.getTime() + seconds * 1000);
+const bruno = "bruno.leroy@globex.example";
 
 describe("signed identities", () => {
-  it("verifies an identity signed with the secret, in lower case, until it expires", () => {
-    const identity = signIdentity(secret, " Bruno.Leroy@Globex.example ", now);
+  it("verifies an identity signed for a project, in normal case, until it expires", () => {
+    const identity = signIdentity(portalSecret, " Bruno.Leroy@Globex.example ", " portal ", now);
 
-    expect(identity.email).toBe("bruno.leroy@globex.example");
-    expect(verifyIdentity(secret, identity, now)).toBe(true);
-    expect(verifyIdentity(secret, identity, later(maxIdentityLifetimeSeconds - 1))).toBe(true);
-    expect(verifyIdentity(secret, identity, later(maxIdentityLifetimeSeconds))).toBe(false);
+    expect(identity).toMatchObject({ email: bruno, project: "PORTAL" });
+    expect(verifyIdentity(secrets, identity, now)).toBe(true);
+    expect(verifyIdentity(secrets, identity, later(maxIdentityLifetimeSeconds - 1))).toBe(true);
+    expect(verifyIdentity(secrets, identity, later(maxIdentityLifetimeSeconds))).toBe(false);
   });
 
-  it("refuses another email, another secret or a changed expiry", () => {
-    const identity = signIdentity(secret, "bruno.leroy@globex.example", now);
+  it("refuses another email, another project, a changed expiry or an unknown project", () => {
+    const identity = signIdentity(portalSecret, bruno, "PORTAL", now);
 
-    expect(verifyIdentity(secret, { ...identity, email: "alice.martin@acme.example" }, now)).toBe(
+    const changed = [
+      { ...identity, email: "alice.martin@acme.example" },
+      { ...identity, project: "SHOP" },
+      { ...identity, expires: identity.expires - 60 },
+    ];
+    expect(changed.map((attempt) => verifyIdentity(secrets, attempt, now))).toEqual([
       false,
-    );
-    expect(verifyIdentity("another-secret", identity, now)).toBe(false);
-    expect(verifyIdentity(secret, { ...identity, expires: identity.expires - 60 }, now)).toBe(
       false,
-    );
+      false,
+    ]);
+    expect(verifyIdentity(new Map([["SHOP", shopSecret]]), identity, now)).toBe(false);
+  });
+
+  it("refuses an identity signed for a project with the secret of another project", () => {
+    // The shop application knows only its own secret: it cannot vouch for people of the portal.
+    const forged = signIdentity(shopSecret, bruno, "PORTAL", now);
+
+    expect(verifyIdentity(secrets, forged, now)).toBe(false);
   });
 
   it("refuses a signature that expires too far in the future", () => {
-    const identity = signIdentity(secret, "bruno.leroy@globex.example", later(3600));
+    const identity = signIdentity(portalSecret, bruno, "PORTAL", later(3600));
 
-    expect(verifyIdentity(secret, identity, now)).toBe(false);
+    expect(verifyIdentity(secrets, identity, now)).toBe(false);
   });
 
   it("refuses a signature that is not hexadecimal of the right length", () => {
-    const identity = signIdentity(secret, "bruno.leroy@globex.example", now);
+    const identity = signIdentity(portalSecret, bruno, "PORTAL", now);
 
-    expect(verifyIdentity(secret, { ...identity, signature: "abc" }, now)).toBe(false);
+    expect(verifyIdentity(secrets, { ...identity, signature: "abc" }, now)).toBe(false);
   });
 });

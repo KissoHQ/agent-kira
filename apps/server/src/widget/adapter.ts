@@ -10,6 +10,7 @@ import {
   storeInboundMessage,
   storeOutboundMessage,
   type TurnInput,
+  worksOnProjectByEmail,
 } from "@request-agent/core";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -20,7 +21,7 @@ import type { HandledMessage } from "../mastra/agents/handle-message";
 import { statusLabels } from "../mastra/agents/reply";
 import { createSerialQueue, defaultRetryDelaysMs, handleReliably } from "../reliable-handling";
 import { type AcceptedFile, acceptFiles, maxFileBytes, maxFiles } from "./files";
-import { verifyIdentity } from "./identity";
+import { type IdentitySecrets, verifyIdentity } from "./identity";
 import { widgetScript } from "./script";
 
 export interface WidgetLogger {
@@ -34,9 +35,9 @@ export interface WidgetOptions {
   handle: (input: TurnInput) => Promise<HandledMessage>;
   // Origins of the applications allowed to embed the widget, such as https://portal.example.com.
   allowedOrigins: string[];
-  // Shared with the applications to sign the identity of the person signed in. Without it, every
-  // person is unverified.
-  identitySecret: string | undefined;
+  // The secret of each project's application, which signs the identity of the person signed in.
+  // A project without a secret has only unverified people.
+  identitySecrets: IdentitySecrets;
   // Folder where the attached files are written, under random names.
   attachmentsDir: string;
   logger: WidgetLogger;
@@ -60,12 +61,16 @@ const subjects = {
 } as const;
 
 const text = z.string().trim().min(1).max(5000);
+// The signature of the application, sent with every message of a person signed in.
+const signatureFields = {
+  expires: z.coerce.number().int().optional(),
+  signature: z.string().optional(),
+};
 const newMessageForm = z.object({
   kind: z.enum(["QUESTION", "BUG", "EVOLUTION"]),
   text,
   email: z.string().trim().toLowerCase().pipe(z.email().max(254)),
-  expires: z.coerce.number().int().optional(),
-  signature: z.string().optional(),
+  ...signatureFields,
   // Set by the application that embeds the widget: a project with a widget channel.
   project: z
     .string()
@@ -74,7 +79,7 @@ const newMessageForm = z.object({
     .regex(/^[A-Z][A-Z0-9]{1,9}$/)
     .optional(),
 });
-const replyForm = z.object({ text });
+const replyForm = z.object({ text, ...signatureFields });
 
 // A conversation is reached only with its token, which only the browser that opened it holds.
 const conversationToken = z.string().regex(/^[\w-]{43}$/);
@@ -107,6 +112,25 @@ export async function createWidgetApp(options: WidgetOptions) {
   const { db, logger } = options;
   const now = options.now ?? (() => new Date());
   const queue = createSerialQueue();
+
+  // A person is verified only by a valid signature of the application of the project, for someone
+  // who works on that project: an email typed in the widget proves nothing, and an application
+  // cannot vouch for the people of another client.
+  async function isVerified(person: {
+    email: string;
+    project: string | null;
+    expires: number | undefined;
+    signature: string | undefined;
+  }): Promise<boolean> {
+    const { email, project, expires, signature } = person;
+    if (project === null || expires === undefined || signature === undefined) {
+      return false;
+    }
+    if (!verifyIdentity(options.identitySecrets, { email, project, expires, signature }, now())) {
+      return false;
+    }
+    return worksOnProjectByEmail(db, email, project);
+  }
 
   async function reply(conversation: string, messageId: string, answer: string): Promise<void> {
     await storeOutboundMessage(db, {
@@ -218,13 +242,8 @@ export async function createWidgetApp(options: WidgetOptions) {
       return fail(c, 400, invalidMessage);
     }
     const { email, expires, signature } = form.data;
-    // A person is verified only by a signature of the application: an email typed in the widget
-    // proves nothing.
-    const verified =
-      options.identitySecret !== undefined &&
-      expires !== undefined &&
-      signature !== undefined &&
-      verifyIdentity(options.identitySecret, { email, expires, signature }, now());
+    const project = form.data.project ?? null;
+    const verified = await isVerified({ email, project, expires, signature });
     return receive(
       c,
       randomBytes(32).toString("base64url"),
@@ -232,7 +251,7 @@ export async function createWidgetApp(options: WidgetOptions) {
         text: form.data.text,
         subject: subjects[form.data.kind],
         sender: email,
-        raw: { verified, project: form.data.project ?? null },
+        raw: { verified, project },
       },
       files,
     );
@@ -253,11 +272,26 @@ export async function createWidgetApp(options: WidgetOptions) {
     if (!form.success || files === undefined) {
       return fail(c, 400, invalidMessage);
     }
-    // A reply keeps the person and the trust of the first message of the conversation.
+    // A reply keeps the person and the project of the first message of the conversation. It is
+    // verified only when that message was, and the reply is signed again for the same person: a
+    // token found on a shared computer does not let someone else write in their name.
+    const verified =
+      raw.data.verified &&
+      (await isVerified({
+        email: origin.sender,
+        project: raw.data.project,
+        expires: form.data.expires,
+        signature: form.data.signature,
+      }));
     return receive(
       c,
       token.data,
-      { text: form.data.text, subject: null, sender: origin.sender, raw: raw.data },
+      {
+        text: form.data.text,
+        subject: null,
+        sender: origin.sender,
+        raw: { verified, project: raw.data.project },
+      },
       files,
     );
   });

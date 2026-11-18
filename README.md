@@ -409,7 +409,7 @@ All dependency versions are declared once in the `catalog` of `pnpm-workspace.ya
 
 - Slack messages, emails and widget messages are handled one at a time. A message left unhandled by a restart is handled again at the next start.
 - Duplicates are found among requests sharing words or spelling with the message: a rewording with no word in common, such as "CB" for "carte bancaire", is missed.
-- Email attachments are described (name, type, size) but their content is not stored. Files sent through the widget are stored and can be downloaded by the team.
+- Email attachments are described (name, type, size) in the interface but cannot be downloaded: their content is only kept inside the stored source of the email. Files sent through the widget are stored and can be downloaded by the team.
 - The text of a message is kept up to 10,000 characters and its subject up to 500, so the model and the search always read a bounded text. A longer text ends with " […]" in the interface. The original message stays whole in the stored source.
 - The widget needs the Mastra server to be reachable from the browsers of the applications. The server listens on this machine only by default: `MASTRA_HOST` opens it, behind a reverse proxy that serves it over HTTPS.
 - A support question answered from a help article gets no request: if the model wrongly judges that an article answers it, the team does not see it. The articles themselves are written and kept up to date by the team.

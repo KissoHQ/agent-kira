@@ -12,8 +12,8 @@ allowBuilds:
   esbuild: true
 
 catalog:
-  "@hono/node-server": 2.1.5
-  "@mastra/core": 1.79.0
+  "@hono/node-server": 2.1.8
+  "@mastra/core": 1.83.0
   "@slack/socket-mode": 3.1.0
   "@slack/web-api": 8.2.0
   "@types/node": 26.6.5
@@ -21,9 +21,9 @@ catalog:
   drizzle-kit: 0.31.11
   drizzle-orm: 0.45.4
   email-reply-parser: 2.3.9
-  hono: 4.13.14
+  hono: 4.13.18
   imapflow: 2.9.1
-  mastra: 1.35.0
+  mastra: 1.39.0
   nodemailer: 10.2.1
   ollama-ai-provider-v2: 4.1.0
   oxlint: 1.89.0
@@ -39,3 +39,19 @@ overrides:
   # drizzle-kit declares @esbuild-kit/esm-loader but never loads it. Its esbuild 0.18 is flagged by
   # GHSA-67mh-4wv8-2f99, so it gets the version drizzle-kit itself runs.
   "@esbuild-kit/core-utils>esbuild": 0.25.12
+  # The Mastra deployer bundles @hono/node-server into the built server. 1.83.0 bundles 2.1.6, the
+  # first version fixed for GHSA-jpvv-r467-5p4w and GHSA-qv5m-9pm6-hqp3; the CLI would take the
+  # newest 1.x, so it is pinned to the version matching @mastra/core.
+  "mastra>@mastra/deployer": 1.83.0
+  # The WebSocket helper of the Mastra deployer pulls @hono/node-server 1.x, flagged by
+  # GHSA-jpvv-r467-5p4w and GHSA-rmxm-3fg6-px4f until 1.19.18; it is bundled into the built server.
+  "@hono/node-ws>@hono/node-server": 1.19.19
+  # The archiver of the Mastra CLI pulls minimatch 10, flagged by GHSA-g3hv-75wg-m249 until 11.0.1.
+  # readdir-glob only uses the Minimatch class, unchanged in 11.
+  "readdir-glob>minimatch": 11.0.8
+
+auditConfig:
+  ignoreGhsas:
+    # serveStatic of @hono/node-server 1.x, with no fix in 1.x. Only @hono/node-ws asks for 1.x, as a
+    # peer dependency it never imports, so this copy is installed but never loaded.
+    - GHSA-rmxm-3fg6-px4f

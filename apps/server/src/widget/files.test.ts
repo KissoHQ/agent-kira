@@ -42,4 +42,23 @@ describe("acceptFiles", () => {
 
     expect(file?.filename).toBe("x.png");
   });
+
+  it("gives a file the extension of its content, so it never opens as a program", async () => {
+    const forms = await Promise.all([
+      acceptFiles([
+        new File(["@echo off"], "fix.bat"),
+        new File(["<script>alert(1)</script>"], "page.html"),
+        new File([png], "capture"),
+      ]),
+      acceptFiles([new File([pdf], "Devis.PDF"), new File(["a;b"], "export.csv")]),
+    ]);
+
+    expect(forms.flatMap((files) => files?.map((file) => file.filename))).toEqual([
+      "fix.bat.txt",
+      "page.html.txt",
+      "capture.png",
+      "Devis.PDF",
+      "export.csv",
+    ]);
+  });
 });

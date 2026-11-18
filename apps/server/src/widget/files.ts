@@ -15,6 +15,15 @@ const signatures: { contentType: string; bytes: number[] }[] = [
   { contentType: "application/pdf", bytes: [0x25, 0x50, 0x44, 0x46, 0x2d] },
 ];
 
+// The extension that matches each accepted type. A downloaded file is opened by its extension, so
+// a text file named "fix.bat" or "page.html" must not keep it.
+const extensions: Record<string, string[]> = {
+  "image/png": [".png"],
+  "image/jpeg": [".jpg", ".jpeg"],
+  "application/pdf": [".pdf"],
+  "text/plain": [".txt", ".log", ".csv"],
+};
+
 function startsWith(bytes: Uint8Array, prefix: number[]): boolean {
   return prefix.every((value, index) => bytes[index] === value);
 }
@@ -40,14 +49,20 @@ function contentTypeOf(bytes: Uint8Array): string | undefined {
   return isText(bytes) ? "text/plain" : undefined;
 }
 
-// Keeps the name readable but harmless: no path, no control character.
-function safeName(name: string): string {
+// Keeps the name readable but harmless: no path, no control character, and an extension that
+// matches the content, added when the name has another one.
+function safeName(name: string, contentType: string): string {
   const base = name.split(/[/\\]/).at(-1) ?? "";
   const cleaned = base
     .replaceAll(/[\p{Cc}"]/gu, "")
     .trim()
     .slice(0, 200);
-  return cleaned === "" ? "fichier" : cleaned;
+  const named = cleaned === "" ? "fichier" : cleaned;
+  const allowed = extensions[contentType] ?? [];
+  const lower = named.toLowerCase();
+  return allowed.some((extension) => lower.endsWith(extension))
+    ? named
+    : `${named}${allowed[0] ?? ""}`;
 }
 
 // The files of a form, or undefined when one of them is refused: too many, too large, empty, or
@@ -66,7 +81,7 @@ export async function acceptFiles(values: unknown[]): Promise<AcceptedFile[] | u
       const contentType = contentTypeOf(bytes);
       return contentType === undefined
         ? undefined
-        : { filename: safeName(file.name), contentType, bytes };
+        : { filename: safeName(file.name, contentType), contentType, bytes };
     }),
   );
   return accepted.every((file) => file !== undefined) ? accepted : undefined;

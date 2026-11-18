@@ -99,6 +99,7 @@ export {
 } from "./messages/inbox.ts";
 export {
   conversationOrigin,
+  conversationSenderDomains,
   readConversation,
   type ConversationThread,
 } from "./messages/conversation.ts";

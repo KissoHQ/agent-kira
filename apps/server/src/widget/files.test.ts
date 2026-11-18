@@ -58,7 +58,7 @@ describe("acceptFiles", () => {
       "page.html.txt",
       "capture.png",
       "Devis.PDF",
-      "export.csv",
+      "export.csv.txt",
     ]);
   });
 });

@@ -16,12 +16,13 @@ const signatures: { contentType: string; bytes: number[] }[] = [
 ];
 
 // The extension that matches each accepted type. A downloaded file is opened by its extension, so
-// a text file named "fix.bat" or "page.html" must not keep it.
+// a text file named "fix.bat" or "page.html" must not keep it, nor "data.csv", which a spreadsheet
+// would open and whose formulas it could run.
 const extensions: Record<string, string[]> = {
   "image/png": [".png"],
   "image/jpeg": [".jpg", ".jpeg"],
   "application/pdf": [".pdf"],
-  "text/plain": [".txt", ".log", ".csv"],
+  "text/plain": [".txt", ".log"],
 };
 
 function startsWith(bytes: Uint8Array, prefix: number[]): boolean {

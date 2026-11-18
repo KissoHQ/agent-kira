@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { rawEmail } from "../../test/emails";
 import { parseEmail } from "./parse";
-import { isAutomatic, senderTrust } from "./policy";
+import { checkSender, isAutomatic } from "./policy";
 
 const trusted = { trustedAuthservId: "mx.requests.example", trustAllSenders: false };
 
@@ -10,14 +10,14 @@ async function emailWith(headers: Record<string, string>, from = "alice.martin@a
   return parseEmail(await rawEmail({ from, headers }));
 }
 
-describe("senderTrust", () => {
+describe("checkSender", () => {
   it("verifies a sender that passed DMARC at our receiving server", async () => {
     const email = await emailWith({
       "Authentication-Results":
         "mx.requests.example; dkim=pass header.i=@acme.example; dmarc=pass (p=REJECT) header.from=acme.example",
     });
 
-    expect(senderTrust(email, trusted)).toBe("VERIFIED");
+    expect(checkSender(email, trusted).trust).toBe("VERIFIED");
   });
 
   it("reads the header that Gmail writes, with its comments and its other methods", async () => {
@@ -27,9 +27,9 @@ describe("senderTrust", () => {
         "mx.google.com;\r\n       dkim=pass header.i=@acme.example header.s=20260707 header.b=jf1ehd1E;\r\n       spf=pass (google.com: domain of bounce@mail.acme.example designates 209.85.220.69 as permitted sender) smtp.mailfrom=bounce@mail.acme.example;\r\n       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=acme.example;\r\n       dara=pass header.i=@gmail.com",
     });
 
-    expect(senderTrust(email, { trustedAuthservId: "mx.google.com", trustAllSenders: false })).toBe(
-      "VERIFIED",
-    );
+    expect(
+      checkSender(email, { trustedAuthservId: "mx.google.com", trustAllSenders: false }).trust,
+    ).toBe("VERIFIED");
   });
 
   it("ignores a result written by another server, as a sender can forge one", async () => {
@@ -37,7 +37,7 @@ describe("senderTrust", () => {
       "Authentication-Results": "mx.evil.example; dmarc=pass header.from=acme.example",
     });
 
-    expect(senderTrust(email, trusted)).toBe("UNVERIFIED");
+    expect(checkSender(email, trusted).trust).toBe("UNVERIFIED");
   });
 
   it("does not verify a sender that failed DMARC, or another domain than the From address", async () => {
@@ -48,8 +48,22 @@ describe("senderTrust", () => {
       "Authentication-Results": "mx.requests.example; dmarc=pass header.from=evil.example",
     });
 
-    expect(senderTrust(failed, trusted)).toBe("UNVERIFIED");
-    expect(senderTrust(otherDomain, trusted)).toBe("UNVERIFIED");
+    expect(checkSender(failed, trusted).trust).toBe("UNVERIFIED");
+    expect(checkSender(otherDomain, trusted).trust).toBe("UNVERIFIED");
+  });
+
+  it("marks as forged an address whose domain failed DMARC at our receiving server only", async () => {
+    const failed = await emailWith({
+      "Authentication-Results": "mx.requests.example; dmarc=fail header.from=acme.example",
+    });
+    const failedElsewhere = await emailWith({
+      "Authentication-Results": "mx.evil.example; dmarc=fail header.from=acme.example",
+    });
+    const unknown = await emailWith({});
+
+    expect(checkSender(failed, trusted)).toEqual({ trust: "UNVERIFIED", forged: true });
+    expect(checkSender(failedElsewhere, trusted).forged).toBe(false);
+    expect(checkSender(unknown, trusted).forged).toBe(false);
   });
 
   it("verifies nobody when no receiving server is trusted", async () => {
@@ -57,16 +71,16 @@ describe("senderTrust", () => {
       "Authentication-Results": "mx.requests.example; dmarc=pass header.from=acme.example",
     });
 
-    expect(senderTrust(email, { trustedAuthservId: undefined, trustAllSenders: false })).toBe(
+    expect(checkSender(email, { trustedAuthservId: undefined, trustAllSenders: false }).trust).toBe(
       "UNVERIFIED",
     );
-    expect(senderTrust(await emailWith({}), trusted)).toBe("UNVERIFIED");
+    expect(checkSender(await emailWith({}), trusted).trust).toBe("UNVERIFIED");
   });
 
   it("trusts every sender only when told to, for local tests", async () => {
     expect(
-      senderTrust(await emailWith({}), { trustedAuthservId: undefined, trustAllSenders: true }),
-    ).toBe("VERIFIED");
+      checkSender(await emailWith({}), { trustedAuthservId: undefined, trustAllSenders: true }),
+    ).toEqual({ trust: "VERIFIED", forged: false });
   });
 });
 

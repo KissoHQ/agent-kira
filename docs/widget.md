@@ -6,11 +6,11 @@ The widget has no business logic: it sends what the person writes to the agent s
 
 ## Configuration of the agent server
 
-| Variable                 | Role                                                                                                                                                        | Example value                         |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `WIDGET_ALLOWED_ORIGINS` | Origins of the applications that embed the widget, separated by commas. Without it, the server runs without the widget                                      | `https://portal.example.com`          |
-| `WIDGET_IDENTITY_SECRET` | Optional. Secret shared with the applications, at least 32 characters, to sign the identity of the person signed in. Without it, every person is unverified | Generated with `openssl rand -hex 32` |
-| `ATTACHMENTS_DIR`        | Absolute path of the folder where the files people attach are written. The web interface of the team reads the same folder to download them                 | `/var/lib/request-agent/attachments`  |
+| Variable                  | Role                                                                                                                                                                                                                                                       | Example value                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `WIDGET_ALLOWED_ORIGINS`  | Origins of the applications that embed the widget, separated by commas. Without it, the server runs without the widget                                                                                                                                     | `https://portal.example.com`                               |
+| `WIDGET_IDENTITY_SECRETS` | Optional. One secret per project, `PROJECT=secret` separated by commas, each at least 32 characters and given only to the application of that project, to sign the identity of the person signed in. A project without a secret has only unverified people | `PORTAL=` followed by the output of `openssl rand -hex 32` |
+| `ATTACHMENTS_DIR`         | Absolute path of the folder where the files people attach are written. The web interface of the team reads the same folder to download them                                                                                                                | `/var/lib/request-agent/attachments`                       |
 
 Restart the agent server after changing them. The log shows `Widget listening`.
 
@@ -38,21 +38,28 @@ The server of the application, never the browser, computes the signature for the
 
 - `email`: the address of the person, in lower case;
 - `expires`: a Unix time in seconds, at most 24 hours ahead;
-- `signature`: the HMAC-SHA256, in hexadecimal, of the email, a line break and the expiry, with `WIDGET_IDENTITY_SECRET`.
+- `signature`: the HMAC-SHA256, in hexadecimal, of the email, a line break, the project key in capitals, a line break and the expiry, with the secret of that project in `WIDGET_IDENTITY_SECRETS`.
 
-In Node.js:
+In Node.js, for the PORTAL project:
 
 ```js
 import { createHmac } from "node:crypto";
 
 const email = user.email.trim().toLowerCase();
+const project = "PORTAL";
 const expires = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
-const signature = createHmac("sha256", process.env.WIDGET_IDENTITY_SECRET)
-  .update(`${email}\n${expires}`)
+const signature = createHmac("sha256", process.env.PORTAL_WIDGET_SECRET)
+  .update(`${email}\n${project}\n${expires}`)
   .digest("hex");
 ```
 
-The agent then recognizes the person as a verified contact, with their organization and projects, as for an email that passed DMARC. A signature that is missing, wrong or expired makes the person unverified: their message is filed for a review.
+The agent then recognizes the person as a verified contact, with their organization and projects, as for an email that passed DMARC. The person is unverified, and their message filed for a review, when:
+
+- the signature is missing, wrong or expired;
+- it was made with the secret of another project, so an application cannot vouch for the people of another client;
+- the person does not work on the project of the application.
+
+The widget signs every message again with the attributes of the page, replies included. A reply without a valid signature for the same person is unverified, even in a conversation that started verified: someone else on the same computer cannot write in their name. Each person signed in has their own list of conversations in the browser.
 
 ## What the person can do
 

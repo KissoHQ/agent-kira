@@ -1,67 +1,91 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createSignInLimiter,
-  lockDurationMs,
-  maxFailures,
-  maxTrackedEmails,
-} from "./sign-in-limiter.ts";
+import { createAttemptLimiter, emailLimits, type LimiterSettings } from "./sign-in-limiter.ts";
 
-function limiterAt(start: number) {
+const settings: LimiterSettings = { maxAttempts: 5, lockDurationMs: 1000, maxTrackedKeys: 100 };
+
+function limiterAt(start: number, limits = settings) {
   let time = start;
-  const limiter = createSignInLimiter(() => time);
+  const limiter = createAttemptLimiter(limits, () => time);
   return { limiter, advance: (ms: number) => (time += ms) };
 }
 
-describe("createSignInLimiter", () => {
-  it("locks an email after the maximum number of failures, whatever its case", () => {
+function attempt(limiter: ReturnType<typeof createAttemptLimiter>, key: string, times: number) {
+  return Array.from({ length: times }, () => limiter.begin(key).allowed);
+}
+
+describe("createAttemptLimiter", () => {
+  it("allows the maximum number of attempts for a key, whatever its case, then locks it", () => {
     const { limiter } = limiterAt(0);
 
-    for (let failure = 1; failure < maxFailures; failure += 1) {
-      limiter.recordFailure("dana@team.example");
-    }
-    expect(limiter.isLocked("dana@team.example")).toBe(false);
+    expect(attempt(limiter, "dana@team.example", 4)).toEqual([true, true, true, true]);
+    expect(limiter.begin(" Dana@Team.example ").allowed).toBe(true);
 
-    limiter.recordFailure(" Dana@Team.example ");
-
-    expect(limiter.isLocked("dana@team.example")).toBe(true);
-    expect(limiter.isLocked("other@team.example")).toBe(false);
+    expect(limiter.begin("dana@team.example")).toEqual({ allowed: false, retryAfterMs: 1000 });
+    expect(limiter.begin("other@team.example").allowed).toBe(true);
   });
 
-  it("unlocks after the lock duration", () => {
+  it("counts attempts before their result, so a burst of attempts cannot pass the limit", () => {
+    const { limiter } = limiterAt(0);
+
+    const burst = attempt(limiter, "dana@team.example", 200);
+
+    expect(burst.filter(Boolean)).toHaveLength(settings.maxAttempts);
+  });
+
+  it("unlocks after the lock duration, with a new count", () => {
     const { limiter, advance } = limiterAt(0);
-    for (let failure = 0; failure < maxFailures; failure += 1) {
-      limiter.recordFailure("dana@team.example");
-    }
+    attempt(limiter, "dana@team.example", settings.maxAttempts);
 
-    advance(lockDurationMs - 1);
-    expect(limiter.isLocked("dana@team.example")).toBe(true);
+    advance(settings.lockDurationMs - 1);
+    expect(limiter.begin("dana@team.example")).toEqual({ allowed: false, retryAfterMs: 1 });
     advance(1);
-    expect(limiter.isLocked("dana@team.example")).toBe(false);
+    expect(attempt(limiter, "dana@team.example", settings.maxAttempts).every(Boolean)).toBe(true);
   });
 
-  it("forgets the failures after a successful sign-in", () => {
-    const { limiter } = limiterAt(0);
-    for (let failure = 1; failure < maxFailures; failure += 1) {
-      limiter.recordFailure("dana@team.example");
-    }
+  it("forgets the attempts of a key that stays quiet for a whole window", () => {
+    const { limiter, advance } = limiterAt(0);
+    attempt(limiter, "dana@team.example", settings.maxAttempts - 1);
 
-    limiter.recordSuccess("dana@team.example");
-    limiter.recordFailure("dana@team.example");
+    advance(settings.lockDurationMs);
 
-    expect(limiter.isLocked("dana@team.example")).toBe(false);
+    expect(attempt(limiter, "dana@team.example", settings.maxAttempts - 1).every(Boolean)).toBe(
+      true,
+    );
+    expect(limiter.begin("dana@team.example").allowed).toBe(true);
   });
 
-  it("keeps a bounded number of emails, dropping the oldest", () => {
+  it("gives back the attempt of a success, and clears every attempt on demand", () => {
     const { limiter } = limiterAt(0);
-    for (let failure = 0; failure < maxFailures; failure += 1) {
-      limiter.recordFailure("dana@team.example");
+    attempt(limiter, "office", settings.maxAttempts);
+
+    limiter.giveBack("office");
+    expect(limiter.begin("office").allowed).toBe(true);
+
+    limiter.clear("office");
+    expect(attempt(limiter, "office", settings.maxAttempts).every(Boolean)).toBe(true);
+  });
+
+  it("never drops a locked key to make room, even when flooded with invented keys", () => {
+    const { limiter } = limiterAt(0);
+    attempt(limiter, "dana@team.example", settings.maxAttempts);
+
+    for (let index = 0; index < settings.maxTrackedKeys * 3; index += 1) {
+      limiter.begin(`invented-${index}@team.example`);
     }
 
-    for (let index = 0; index < maxTrackedEmails; index += 1) {
-      limiter.recordFailure(`invented-${index}@team.example`);
-    }
+    expect(limiter.begin("dana@team.example").allowed).toBe(false);
+  });
 
-    expect(limiter.isLocked("dana@team.example")).toBe(false);
+  it("refuses a new key when every tracked key is locked", () => {
+    const { limiter } = limiterAt(0, { ...settings, maxTrackedKeys: 2 });
+    attempt(limiter, "a", settings.maxAttempts);
+    attempt(limiter, "b", settings.maxAttempts);
+
+    expect(limiter.begin("c")).toEqual({ allowed: false, retryAfterMs: settings.lockDurationMs });
+  });
+
+  it("follows the cheat sheet for one account: five attempts every fifteen minutes", () => {
+    expect(emailLimits).toMatchObject({ maxAttempts: 5, lockDurationMs: 15 * 60 * 1000 });
   });
 });

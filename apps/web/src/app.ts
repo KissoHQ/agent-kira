@@ -21,6 +21,7 @@ import {
   reviewRequestInput,
   type StaffMember,
 } from "@request-agent/core";
+import type { HttpBindings } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -29,7 +30,13 @@ import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 
-import { createSignInLimiter, type SignInLimiter } from "./sign-in-limiter.ts";
+import { createCheckQueue } from "./password-checks.ts";
+import {
+  type Admission,
+  addressLimits,
+  createAttemptLimiter,
+  emailLimits,
+} from "./sign-in-limiter.ts";
 import { dateFormatter } from "./views/labels.ts";
 import { icon } from "./views/icon.ts";
 import type { Fragment, ViewContext } from "./views/layout.ts";
@@ -42,18 +49,38 @@ import { stylesheet } from "./views/style.ts";
 export interface WebAppOptions {
   db: Database;
   timeZone: string;
-  limiter?: SignInLimiter;
+  // Behind a reverse proxy, every request comes from the proxy: the address of the person is the
+  // last one the proxy added to X-Forwarded-For. Only set it when such a proxy is in front.
+  trustProxy?: boolean;
   // Called when a request fails unexpectedly, so the error is logged without being shown.
   onError?: (error: Error) => void;
   // Folder where the widget writes the files people attach. Without it, no file is downloaded.
   attachmentsDir?: string;
 }
 
-type Env = { Variables: { staff: StaffMember; sessionToken: string } };
+type Env = {
+  Bindings: Partial<HttpBindings>;
+  Variables: { staff: StaffMember; sessionToken: string };
+};
 
 const sessionCookie = "session";
 const invalidCredentials = "E-mail ou mot de passe incorrect.";
-const tooManyAttempts = "Trop de tentatives. Réessayez dans 15 minutes.";
+const busy = "Trop de connexions en cours. Réessayez dans quelques secondes.";
+const busyRetryAfterSeconds = 5;
+
+const tooManyAttempts = (retryAfterMs: number) =>
+  `Trop de tentatives. Réessayez dans ${Math.ceil(retryAfterMs / 60_000)} minutes.`;
+
+// The address the request comes from, as the limiter of sign-in attempts counts it.
+function clientAddress(c: Context<Env>, trustProxy: boolean): string {
+  if (trustProxy) {
+    const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
+    if (forwarded !== undefined && forwarded !== "") {
+      return forwarded;
+    }
+  }
+  return c.env?.incoming?.socket.remoteAddress ?? "unknown";
+}
 
 // The forms of the interface are a few short fields. A larger body is refused before it is read,
 // so nobody can fill the memory of the server, even without a session.
@@ -102,12 +129,22 @@ function formValue(form: Record<string, unknown>, name: string): string | undefi
 
 export function createWebApp(options: WebAppOptions) {
   const { db } = options;
-  const limiter = options.limiter ?? createSignInLimiter();
+  const emailLimiter = createAttemptLimiter(emailLimits);
+  const addressLimiter = createAttemptLimiter(addressLimits);
+  const passwordChecks = createCheckQueue();
+  const trustProxy = options.trustProxy ?? false;
   const formatDate = dateFormatter(options.timeZone);
   const app = new Hono<Env>();
   const view = (c: Context<Env>): ViewContext => ({ staff: c.get("staff"), formatDate });
-  const render = (c: Context<Env>, fragment: Fragment, status: 200 | 400 | 401 | 404 | 429 = 200) =>
-    c.html(fragment, status);
+  const render = (
+    c: Context<Env>,
+    fragment: Fragment,
+    status: 200 | 400 | 401 | 404 | 429 | 503 = 200,
+  ) => c.html(fragment, status);
+  const refuse = (c: Context<Env>, admission: Admission & { allowed: false }, email: string) => {
+    c.header("Retry-After", String(Math.ceil(admission.retryAfterMs / 1000)));
+    return render(c, signInPage(tooManyAttempts(admission.retryAfterMs), email), 429);
+  };
 
   // Only the script and stylesheet of this site: nothing inline and no resource from elsewhere
   // (OWASP Secure Headers Project). The script may only fetch pages of this site.
@@ -154,15 +191,31 @@ export function createWebApp(options: WebAppOptions) {
     if (email.length > maxEmailLength) {
       return render(c, signInPage(invalidCredentials), 401);
     }
-    if (limiter.isLocked(email)) {
-      return render(c, signInPage(tooManyAttempts, email), 429);
+    // Both an account and a network address get a few attempts: the first stops guessing one
+    // password, the second stops trying a few passwords on every account.
+    const address = clientAddress(c, trustProxy);
+    const byAddress = addressLimiter.begin(address);
+    if (!byAddress.allowed) {
+      return refuse(c, byAddress, email);
     }
-    const staff = await authenticateStaff(db, email, password);
+    const byEmail = emailLimiter.begin(email);
+    if (!byEmail.allowed) {
+      return refuse(c, byEmail, email);
+    }
+    const check = await passwordChecks.run(() => authenticateStaff(db, email, password));
+    if (!check.ran) {
+      // Nothing was checked: the attempt does not count.
+      addressLimiter.giveBack(address);
+      emailLimiter.giveBack(email);
+      c.header("Retry-After", String(busyRetryAfterSeconds));
+      return render(c, signInPage(busy, email), 503);
+    }
+    const staff = check.value;
     if (staff === undefined) {
-      limiter.recordFailure(email);
       return render(c, signInPage(invalidCredentials, email), 401);
     }
-    limiter.recordSuccess(email);
+    emailLimiter.clear(email);
+    addressLimiter.giveBack(address);
     const { token, expiresAt } = await openSession(db, staff.contactId);
     // Browsers keep Secure cookies over https, and on localhost except Safari.
     setCookie(c, sessionCookie, token, {

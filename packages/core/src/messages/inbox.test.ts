@@ -5,7 +5,10 @@ import { attachments, conversations, messages } from "../db/schema.ts";
 import {
   type ChannelMessage,
   conversationOfMessage,
+  cutText,
   isKnownConversation,
+  maxBodyTextLength,
+  maxSubjectLength,
   storeInboundMessage,
   storeOutboundMessage,
 } from "./inbox.ts";
@@ -57,6 +60,45 @@ describe("storeInboundMessage", () => {
       .map((m) => m.direction)
       .toSorted((a, b) => a.localeCompare(b));
     expect(directions).toEqual(["INBOUND", "OUTBOUND"]);
+  });
+});
+
+describe("cutText", () => {
+  it("keeps a text within the limit as it is", () => {
+    expect(cutText("Bonjour", 7)).toBe("Bonjour");
+  });
+
+  it("keeps the beginning of a longer text, with a mark, within the limit", () => {
+    const cut = cutText("a".repeat(50), 20);
+    expect(cut).toBe(`${"a".repeat(16)} […]`);
+    expect(cut).toHaveLength(20);
+  });
+
+  it("never separates the two halves of an emoji", () => {
+    const cut = cutText(`${"a".repeat(15)}😀😀😀`, 20);
+    expect(cut).toBe(`${"a".repeat(15)} […]`);
+    expect(cut.isWellFormed()).toBe(true);
+  });
+});
+
+describe("text limits", () => {
+  it("stores the beginning of a long message and subject, and keeps the original whole", async () => {
+    const longBody = "panier ".repeat(5000);
+    const stored = await storeInboundMessage(getAppDatabase(), {
+      ...slackMessage,
+      subject: "s".repeat(2000),
+      bodyText: longBody,
+      raw: { text: longBody },
+    });
+
+    const [message] = await getDatabase().select().from(messages);
+    expect(message?.id).toBe(stored.messageId);
+    expect(message?.bodyText).toHaveLength(maxBodyTextLength);
+    expect(message?.bodyText.endsWith(" […]")).toBe(true);
+    expect(message?.subject).toHaveLength(maxSubjectLength);
+    expect(message?.raw).toEqual({ text: longBody });
+    const [conversation] = await getDatabase().select().from(conversations);
+    expect(conversation?.subject).toHaveLength(maxSubjectLength);
   });
 });
 

@@ -3,6 +3,7 @@ import type { MailboxCursor } from "@request-agent/core";
 import { ImapFlow, type SearchObject } from "imapflow";
 import { createTransport } from "nodemailer";
 
+import { retryUntilDone } from "../retry";
 import type { Mailbox, MailSender } from "./adapter";
 
 export interface MailServerSettings {
@@ -63,6 +64,8 @@ export function imapMailbox(
   settings: MailServerSettings,
   logger: MailLogger,
   cursorStore: CursorStore,
+  // Waits between attempts to open the mailbox; by default from 10 seconds to 5 minutes.
+  retryDelaysMs?: number[],
 ): Mailbox & { close: () => Promise<void> } {
   let client: ImapFlow | undefined;
   let closed = false;
@@ -96,6 +99,27 @@ export function imapMailbox(
         return reading;
       };
 
+      // Opens the mailbox, trying again until it opens or the mailbox is closed: the mail server may
+      // be unreachable at startup, or after it closed the connection.
+      let opening = false;
+      const open = async (): Promise<void> => {
+        if (opening || closed) {
+          return;
+        }
+        opening = true;
+        try {
+          await retryUntilDone(connect, {
+            delaysMs: retryDelaysMs,
+            stopped: () => closed,
+            onFailure: (error, attempt) => {
+              logger.error(`The mailbox could not be opened, attempt ${attempt}`, error);
+            },
+          });
+        } finally {
+          opening = false;
+        }
+      };
+
       const connect = async (): Promise<void> => {
         const current = new ImapFlow({
           host: settings.imapHost,
@@ -118,9 +142,7 @@ export function imapMailbox(
             return;
           }
           setTimeout(() => {
-            connect().catch((error: unknown) => {
-              logger.error("The mailbox could not be opened again", error);
-            });
+            void open();
           }, reconnectDelayMs);
         });
         await current.connect();
@@ -128,7 +150,7 @@ export function imapMailbox(
         client = current;
         await readNew(current);
       };
-      await connect();
+      await open();
     },
     markSeen: async (uid) => {
       if (client === undefined) {

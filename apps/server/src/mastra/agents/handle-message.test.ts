@@ -15,6 +15,7 @@ import {
   useAppTestDatabase,
   useTestDatabase,
 } from "@request-agent/core/testing";
+import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { offeredTools, type ScriptedStep, scriptedModel } from "../../../test/scripted-model";
@@ -51,9 +52,11 @@ async function run(
     text?: string;
     thread?: string;
     articles?: KnowledgeHit[];
+    model?: MastraLanguageModelV2Mock;
+    agentTimeoutMs?: number;
   } = {},
 ) {
-  const model = scriptedModel(steps);
+  const model = options.model ?? scriptedModel(steps);
   const searches: { actor: string; question: string }[] = [];
   const messageId = await storeMessage(getDatabase(), {
     sender,
@@ -72,12 +75,35 @@ async function run(
         searches.push({ actor: actor.kind, question });
         return Promise.resolve(options.articles ?? []);
       },
+      agentTimeoutMs: options.agentTimeoutMs ?? 60_000,
     },
   );
   return { model, result, messageId, searches };
 }
 
 describe("handleMessage", () => {
+  it("stops the agent when the model takes longer than the limit, and files the message for a person", async () => {
+    // A model that never answers, until it is told to stop.
+    const silent = new MastraLanguageModelV2Mock({
+      doGenerate: ({ abortSignal }) =>
+        new Promise((_, reject) => {
+          abortSignal?.addEventListener("abort", () => {
+            reject(abortSignal.reason);
+          });
+        }),
+    });
+
+    const started = performance.now();
+    const { result } = await run([], bruno, { model: silent, agentTimeoutMs: 50 });
+
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(result).toEqual({
+      reply:
+        "Votre message est enregistré sous la référence REQ-0001. Une personne de l'équipe va le traiter.",
+      filedBySystem: true,
+    });
+  });
+
   it("files the message of a verified contact as a request, and sends the answer of the model", async () => {
     const answer =
       "Votre demande est enregistrée sous la référence REQ-0001 : Portail inaccessible.";
@@ -487,6 +513,7 @@ describe("handleMessage", () => {
           judgeDuplicate: noDuplicate,
           reviewThreshold: 0.8,
           searchKnowledge: () => Promise.resolve([]),
+          agentTimeoutMs: 60_000,
         },
       ),
     ).rejects.toThrow("Ollama is down");

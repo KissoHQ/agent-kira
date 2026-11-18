@@ -58,6 +58,7 @@ function handlerFor(steps: ScriptedStep[], classifications: Partial<Classificati
       judgeDuplicate: () => Promise.resolve({ reference: null, confidence: 1 }),
       reviewThreshold: testReviewThreshold,
       searchKnowledge: () => Promise.resolve([]),
+      agentTimeoutMs: 60_000,
     });
 }
 

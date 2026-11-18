@@ -17,6 +17,10 @@ import { type HandledMessage, handleMessage } from "./mastra/agents/handle-messa
 // Longest wait for one classification. On a CPU a classification takes up to about a minute.
 const classificationTimeoutMs = 300_000;
 
+// Longest run of the agent on one message. On a CPU an answer takes from 2 to 8 minutes, with the
+// retries of the answer check.
+const agentTimeoutMs = 15 * 60 * 1000;
+
 // Longest wait for the vector of a question: about 0.3 s on a CPU, more while the model loads.
 const embeddingTimeoutMs = 60_000;
 
@@ -55,6 +59,7 @@ export function createChannelHandler(
         judgeDuplicate,
         reviewThreshold: classifierEnv.CLASSIFICATION_REVIEW_THRESHOLD,
         searchKnowledge: (actor, question) => searchKnowledge(db, embedder, actor, question),
+        agentTimeoutMs,
       }),
   };
 }

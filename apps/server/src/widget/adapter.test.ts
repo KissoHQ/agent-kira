@@ -119,7 +119,7 @@ describe("the widget channel", () => {
     expect(widget.inputs).toEqual([
       { messageId: expect.any(String), trust: "VERIFIED", channelAddress: "PORTAL" },
     ]);
-    const [message] = await getDatabase().select().from(messages);
+    const [message] = await getDatabase().select().from(messages).orderBy(messages.receivedAt);
     expect(message).toMatchObject({
       channel: "WIDGET",
       sender: bruno,
@@ -507,7 +507,10 @@ describe("the widget channel", () => {
     expect(widget.inputs).toEqual([
       { messageId: expect.any(String), trust: "VERIFIED", channelAddress: "PORTAL" },
     ]);
-    const stored = await getDatabase().select({ direction: messages.direction }).from(messages);
+    const stored = await getDatabase()
+      .select({ direction: messages.direction })
+      .from(messages)
+      .orderBy(messages.receivedAt);
     expect(stored.map((row) => row.direction)).toEqual(["INBOUND", "OUTBOUND"]);
   });
 });

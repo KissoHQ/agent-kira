@@ -153,7 +153,9 @@ Development mode, with reload on file changes:
 pnpm dev
 ```
 
-The API is available on `http://localhost:4111/api` and Mastra Studio, the built-in interface to test the agent, on `http://localhost:4111`.
+The API is available on `http://localhost:4111/api` and Mastra Studio, the built-in interface to test the agent, on `http://localhost:4111`. They have no sign-in, so they answer only requests addressed to this machine (`localhost`, `127.0.0.1`), and refuse those sent by a page of another site open in the browser.
+
+The built server (`pnpm start`) serves neither the API nor Studio: only the widget routes and `/health`. The channels call the agent inside the server and never need its API.
 
 Production build and start:
 
@@ -270,7 +272,7 @@ The demonstration of both scenarios, with the expected results, is in [`docs/dem
 pnpm demo:email
 ```
 
-The API of the Mastra server can also be called directly. Send a message to the agent:
+With `pnpm dev`, the API of the Mastra server can also be called directly. Send a message to the agent:
 
 ```bash
 curl -X POST http://localhost:4111/api/agents/request-agent/generate \
@@ -408,10 +410,10 @@ All dependency versions are declared once in the `catalog` of `pnpm-workspace.ya
 - Slack messages, emails and widget messages are handled one at a time. A message left unhandled by a restart is handled again at the next start.
 - Duplicates are found among requests sharing words or spelling with the message: a rewording with no word in common, such as "CB" for "carte bancaire", is missed.
 - Email attachments are described (name, type, size) but their content is not stored. Files sent through the widget are stored and can be downloaded by the team.
-- The widget needs the Mastra server to be reachable from the browsers of the applications: it listens on this machine only for now.
+- The widget needs the Mastra server to be reachable from the browsers of the applications. The server listens on this machine only by default: `MASTRA_HOST` opens it, behind a reverse proxy that serves it over HTTPS.
 - A support question answered from a help article gets no request: if the model wrongly judges that an article answers it, the team does not see it. The articles themselves are written and kept up to date by the team.
 - Answers are written by a small local model. The check blocks codes, promises, unknown requests and false claims of forwarding, but a clumsy sentence can still pass. The system records no assignee and no planned date: questions about them are passed to the team.
-- The Mastra server API has no authentication. It only listens on `localhost` and gives no access to the request tools. Authentication will be required before the server is reachable from elsewhere. The web interface of the team has its own accounts.
+- The Mastra server API and Studio have no authentication: only `pnpm dev` serves them, to this machine only. They give no access to the request tools. The web interface of the team has its own accounts.
 - The web interface refuses sign-in for 15 minutes after 5 failures for an email. This count is kept in memory: a restart clears it.
 - Mastra keeps its own data (agent memory, traces) in memory and loses it on restart.
 - The local model takes about 6 GB of memory: on a machine with 16 GB, other heavy programs such as web browsers can make Linux stop it for lack of memory.

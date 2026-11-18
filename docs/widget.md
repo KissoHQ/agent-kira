@@ -92,6 +92,6 @@ The token is the only key to a conversation: the widget keeps it in the storage 
 
 ## Limits
 
-- The Mastra server listens on this machine only. To embed the widget in an application on another machine, the server must be served over HTTPS, and the rest of its API protected, as the README says.
+- The Mastra server listens on this machine only by default. To embed the widget in an application on another machine, set `MASTRA_HOST` and serve the server over HTTPS behind a reverse proxy. The built server serves only the widget and `/health`: the rest of its API is closed.
 - The conversations of a person are known to the browser that sent them: another browser or cleared storage does not list them.
 - Screen capture is not available on phones: a file can be attached instead.

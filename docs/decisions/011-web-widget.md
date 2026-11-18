@@ -38,7 +38,7 @@ The P2 bonus of the brief asks for a widget that the client applications embed a
 - The client applications get a support entry point without a business logic of their own.
 - A person not signed in can write, but the agent treats them as an unverified sender: the message is filed for a review, and they see the reference and status of the request their message created.
 - The conversations of a person are kept by their browser: another browser or cleared storage does not list them.
-- The Mastra server must be reachable from the browsers of the applications. For now it listens on this machine only: opening it needs HTTPS and an authentication of the rest of its API, as the README says.
+- The Mastra server must be reachable from the browsers of the applications. It listens on this machine only by default, and `MASTRA_HOST` opens it behind an HTTPS reverse proxy. The rest of its API is closed outside `pnpm dev`, so the widget is the only part opened.
 
 ## Measures
 

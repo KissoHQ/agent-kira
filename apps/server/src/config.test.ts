@@ -9,7 +9,15 @@ const validEnv = {
 
 describe("loadEnv", () => {
   it("returns the parsed configuration when every variable is valid", () => {
-    expect(loadEnv(validEnv)).toEqual(validEnv);
+    expect(loadEnv({ ...validEnv, MASTRA_HOST: "0.0.0.0" })).toEqual({
+      ...validEnv,
+      MASTRA_HOST: "0.0.0.0",
+    });
+  });
+
+  it("listens on this machine only by default, including with an empty value", () => {
+    expect(loadEnv(validEnv).MASTRA_HOST).toBe("127.0.0.1");
+    expect(loadEnv({ ...validEnv, MASTRA_HOST: "" }).MASTRA_HOST).toBe("127.0.0.1");
   });
 
   it("rejects a base URL that is not a URL", () => {

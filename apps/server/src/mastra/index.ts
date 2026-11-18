@@ -7,6 +7,7 @@ import { startEmailIfConfigured } from "../email/start";
 import { startSlackIfConfigured } from "../slack/start";
 import { startWidgetIfConfigured, widgetRoutes } from "../widget/start";
 import { createRequestAgent } from "./agents/request-agent";
+import { apiGuard } from "./api-guard";
 
 const env = loadEnv();
 const ollama = createOllama({ baseURL: env.OLLAMA_BASE_URL });
@@ -14,7 +15,12 @@ const requestAgent = createRequestAgent(ollama(env.OLLAMA_MODEL));
 
 export const mastra = new Mastra({
   agents: { requestAgent },
-  server: { apiRoutes: widgetRoutes() },
+  server: {
+    host: env.MASTRA_HOST,
+    apiRoutes: widgetRoutes(),
+    // `mastra dev` sets MASTRA_DEV; `mastra start` and the built server do not.
+    middleware: apiGuard({ development: process.env.MASTRA_DEV === "true" }),
+  },
 });
 
 const logger = mastra.getLogger();

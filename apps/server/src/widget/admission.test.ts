@@ -86,7 +86,9 @@ describe("createSlots", () => {
   it("frees the slot of a task that fails", async () => {
     const slots = createSlots(1, 0);
 
-    await expect(slots.run(() => Promise.reject(new Error("disk full")))).rejects.toThrow();
+    await expect(slots.run(() => Promise.reject(new Error("disk full")))).rejects.toThrow(
+      "disk full",
+    );
     expect(await slots.run(() => Promise.resolve("ok"))).toEqual({ value: "ok" });
   });
 });

@@ -18,6 +18,22 @@ function allowedOrigins(): string[] {
   }
 }
 
+// The address a request came from, read from the Node.js bindings Mastra gives the route.
+function remoteAddressOf(env: unknown): string | undefined {
+  if (typeof env !== "object" || env === null || !("incoming" in env)) {
+    return undefined;
+  }
+  const { incoming } = env;
+  if (typeof incoming !== "object" || incoming === null || !("socket" in incoming)) {
+    return undefined;
+  }
+  const { socket } = incoming;
+  if (typeof socket !== "object" || socket === null || !("remoteAddress" in socket)) {
+    return undefined;
+  }
+  return typeof socket.remoteAddress === "string" ? socket.remoteAddress : undefined;
+}
+
 // The routes of the widget on the Mastra server, under /widget. They need no Mastra session: the
 // widget is used by people of other applications, and checks who they are itself. Their CORS rule
 // replaces the default rule of the server, which allows every site.
@@ -31,7 +47,9 @@ export function widgetRoutes(): ApiRoute[] {
       handler: (c) =>
         widget === undefined
           ? c.json({ error: "Not found" }, 404)
-          : widget.fetch(c.req.raw, c.env as { incoming?: { socket: { remoteAddress?: string } } }),
+          : widget.fetch(c.req.raw, {
+              incoming: { socket: { remoteAddress: remoteAddressOf(c.env) } },
+            }),
     }),
   ];
 }

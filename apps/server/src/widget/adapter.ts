@@ -94,6 +94,9 @@ const replyForm = z.object({ text, ...signatureFields });
 
 // A conversation is reached only with its token, which only the browser that opened it holds.
 const conversationToken = z.string().regex(/^[\w-]{43}$/);
+// A conversation without a message for this long is closed to its token, so a token left in a
+// browser or copied somewhere stops working. The requests themselves stay, for the team.
+export const conversationLifetimeMs = 90 * 24 * 60 * 60 * 1000;
 
 // Kept with each message, so a reply and a message handled again after a restart keep the trust
 // and the project of the conversation.
@@ -166,6 +169,8 @@ export async function createWidgetApp(options: WidgetOptions) {
   });
   const waiting = createWaitingCounter(unhandledAtStart.length);
   const uploads = createSlots(maxConcurrentUploads, maxWaitingUploads);
+  const isOver = (lastMessageAt: Date) =>
+    now().getTime() - lastMessageAt.getTime() >= conversationLifetimeMs;
   let storedBytes = await folderSize(options.attachmentsDir);
 
   // A person is verified only by a valid signature of the application of the project, for someone
@@ -400,7 +405,7 @@ export async function createWidgetApp(options: WidgetOptions) {
       ? await conversationOrigin(db, "WIDGET", externalIdOf(token.data))
       : undefined;
     const raw = rawSchema.safeParse(origin?.raw);
-    if (!token.success || origin === undefined || !raw.success) {
+    if (!token.success || origin === undefined || !raw.success || isOver(origin.lastMessageAt)) {
       return fail(c, 404, "Cette conversation est introuvable.");
     }
     const body = await c.req.parseBody({ all: true });
@@ -443,7 +448,8 @@ export async function createWidgetApp(options: WidgetOptions) {
     const thread = token.success
       ? await readConversation(db, "WIDGET", externalIdOf(token.data))
       : undefined;
-    if (thread === undefined) {
+    const lastMessage = thread?.messages.at(-1);
+    if (thread === undefined || lastMessage === undefined || isOver(new Date(lastMessage.sentAt))) {
       return fail(c, 404, "Cette conversation est introuvable.");
     }
     return c.json({

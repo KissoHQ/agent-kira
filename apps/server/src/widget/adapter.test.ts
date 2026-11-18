@@ -19,7 +19,7 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { HandledMessage } from "../mastra/agents/handle-message";
-import { createWidgetApp } from "./adapter";
+import { conversationLifetimeMs, createWidgetApp } from "./adapter";
 import { maxWaitingMessages, maxWaitingPerAddress, messageRate } from "./admission";
 import { signIdentity } from "./identity";
 
@@ -264,6 +264,38 @@ describe("the widget channel", () => {
     expect(widget.inputs.at(-1)).toMatchObject({ trust: "VERIFIED", channelAddress: "PORTAL" });
     const replies = await getDatabase().select({ sender: messages.sender }).from(messages);
     expect(replies.filter((row) => row.sender === bruno)).toHaveLength(2);
+  });
+
+  it("closes a conversation to its token once it has had no message for too long", async () => {
+    let time = new Date();
+    const widget = await createWidgetApp({
+      db: getAppDatabase(),
+      handle: () => Promise.resolve({ reply: answer, filedBySystem: false }),
+      allowedOrigins: [portal],
+      identitySecrets: new Map([["PORTAL", secret]]),
+      attachmentsDir: await mkdtemp(join(tmpdir(), "widget-")),
+      attachmentsQuotaBytes: 1024,
+      logger: { info: () => undefined, error: () => undefined },
+      now: () => time,
+    });
+    const token = await conversationOf(
+      await widget.app.request(
+        "/widget/messages",
+        newMessage({ kind: "BUG", text: "Panne", ...signed() }),
+      ),
+    );
+    await widget.idle();
+
+    time = new Date(time.getTime() + conversationLifetimeMs - 60_000);
+    expect((await widget.app.request(`/widget/conversations/${token}`)).status).toBe(200);
+    time = new Date(time.getTime() + 60_000);
+
+    expect((await widget.app.request(`/widget/conversations/${token}`)).status).toBe(404);
+    const reply = await widget.app.request(
+      `/widget/conversations/${token}/messages`,
+      newMessage({ text: "Toujours en panne", ...signed() }),
+    );
+    expect(reply.status).toBe(404);
   });
 
   it("treats a reply without the signature of the person as unverified", async () => {

@@ -28,6 +28,27 @@ export interface ChannelMessage {
   }[];
 }
 
+// Texts written outside the system are cut to these lengths when stored, so every later step
+// (classification, duplicate search, the model, the web interface) reads a text of bounded size.
+// The original payload stays whole in `raw`.
+export const maxBodyTextLength = 10_000;
+export const maxSubjectLength = 500;
+const cutMark = " […]";
+
+// The text, or its beginning followed by a mark when it is longer than the limit.
+export function cutText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  let end = maxLength - cutMark.length;
+  // An emoji takes two UTF-16 units: the cut must not separate them.
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) {
+    end -= 1;
+  }
+  return `${text.slice(0, end)}${cutMark}`;
+}
+
 export interface StoredMessage {
   messageId: string;
   // False when the channel delivered the same message again: it must not be handled twice.
@@ -39,6 +60,8 @@ async function storeMessage(
   message: ChannelMessage,
   direction: "INBOUND" | "OUTBOUND",
 ): Promise<StoredMessage> {
+  const subject = message.subject == null ? null : cutText(message.subject, maxSubjectLength);
+  const bodyText = cutText(message.bodyText, maxBodyTextLength);
   return db.transaction(async (tx) => {
     // The no-op update makes the row come back when the conversation already exists.
     const [conversation] = await tx
@@ -46,7 +69,7 @@ async function storeMessage(
       .values({
         channel: message.channel,
         externalId: message.conversationExternalId,
-        subject: message.subject ?? null,
+        subject,
       })
       .onConflictDoUpdate({
         target: [conversations.channel, conversations.externalId],
@@ -64,8 +87,8 @@ async function storeMessage(
         externalId: message.externalId,
         direction,
         sender: message.sender,
-        subject: message.subject ?? null,
-        bodyText: message.bodyText,
+        subject,
+        bodyText,
         raw: message.raw ?? {},
         inReplyTo: message.inReplyTo ?? null,
         sentAt: message.sentAt,

@@ -22,6 +22,7 @@ import {
   type StaffMember,
 } from "@request-agent/core";
 import { type Context, Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
@@ -53,6 +54,13 @@ type Env = { Variables: { staff: StaffMember; sessionToken: string } };
 const sessionCookie = "session";
 const invalidCredentials = "E-mail ou mot de passe incorrect.";
 const tooManyAttempts = "Trop de tentatives. Réessayez dans 15 minutes.";
+
+// The forms of the interface are a few short fields. A larger body is refused before it is read,
+// so nobody can fill the memory of the server, even without a session.
+const maxFormBytes = 64 * 1024;
+// No account can have a longer email (RFC 5321), so a longer one is refused without the cost of
+// checking a password, and is not kept by the sign-in limiter.
+const maxEmailLength = 254;
 
 const isNotice = (value: string): value is Notice => Object.hasOwn(notices, value);
 
@@ -113,6 +121,7 @@ export function createWebApp(options: WebAppOptions) {
   // Forms are only accepted from pages of this site, checked with the Origin and Sec-Fetch-Site
   // headers that browsers send.
   app.use(csrf());
+  app.use(bodyLimit({ maxSize: maxFormBytes, onError: (c) => c.text("Payload Too Large", 413) }));
   app.use(async (c, next) => {
     await next();
     // Pages show private data: browsers and proxies must not keep them.
@@ -135,6 +144,9 @@ export function createWebApp(options: WebAppOptions) {
     const form = await c.req.parseBody();
     const email = formValue(form, "email") ?? "";
     const password = formValue(form, "password") ?? "";
+    if (email.length > maxEmailLength) {
+      return render(c, signInPage(invalidCredentials), 401);
+    }
     if (limiter.isLocked(email)) {
       return render(c, signInPage(tooManyAttempts, email), 429);
     }

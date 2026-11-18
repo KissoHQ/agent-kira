@@ -35,7 +35,10 @@ beforeEach(async () => {
   await seedDatabase(getDatabase());
 });
 
-async function widgetFor(handle?: (input: TurnInput) => Promise<HandledMessage>) {
+async function widgetFor(
+  handle?: (input: TurnInput) => Promise<HandledMessage>,
+  attachmentsQuotaBytes = 1024 * 1024 * 1024,
+) {
   const inputs: TurnInput[] = [];
   const folder = await mkdtemp(join(tmpdir(), "widget-"));
   const widget = await createWidgetApp({
@@ -49,6 +52,7 @@ async function widgetFor(handle?: (input: TurnInput) => Promise<HandledMessage>)
     allowedOrigins: [portal],
     identitySecrets: new Map([["PORTAL", secret]]),
     attachmentsDir: folder,
+    attachmentsQuotaBytes,
     logger: { info: () => undefined, error: () => undefined },
     retryDelaysMs: [0, 0],
   });
@@ -382,6 +386,56 @@ describe("the widget channel", () => {
     expect(refused.status).toBe(429);
     expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
     expect(await getDatabase().select().from(messages)).toHaveLength(messageRate.max * 2);
+  });
+
+  it("refuses files beyond the quota of the folder, and still takes messages without files", async () => {
+    const widget = await widgetFor(undefined, png.length * 2);
+    const withFile = () =>
+      widget.app.request(
+        "/widget/messages",
+        newMessage({ kind: "BUG", text: "Capture", ...signed() }, [new File([png], "a.png")]),
+        fromAddress("203.0.113.7"),
+      );
+
+    expect((await withFile()).status).toBe(202);
+    await widget.idle();
+    expect((await withFile()).status).toBe(202);
+    await widget.idle();
+    const full = await withFile();
+    const withoutFile = await widget.app.request(
+      "/widget/messages",
+      newMessage({ kind: "BUG", text: "Sans capture", ...signed() }),
+      fromAddress("203.0.113.7"),
+    );
+
+    expect(full.status).toBe(503);
+    expect(withoutFile.status).toBe(202);
+    expect(await readdir(widget.folder)).toHaveLength(2);
+  });
+
+  it("counts the files already in the folder at start", async () => {
+    const first = await widgetFor(undefined, png.length);
+    await first.app.request(
+      "/widget/messages",
+      newMessage({ kind: "BUG", text: "Capture", ...signed() }, [new File([png], "a.png")]),
+    );
+    await first.idle();
+
+    const restarted = await createWidgetApp({
+      db: getAppDatabase(),
+      handle: () => Promise.resolve({ reply: answer, filedBySystem: false }),
+      allowedOrigins: [portal],
+      identitySecrets: new Map(),
+      attachmentsDir: first.folder,
+      attachmentsQuotaBytes: png.length,
+      logger: { info: () => undefined, error: () => undefined },
+    });
+    const refused = await restarted.app.request(
+      "/widget/messages",
+      newMessage({ kind: "BUG", text: "Capture", email: bruno }, [new File([png], "b.png")]),
+    );
+
+    expect(refused.status).toBe(503);
   });
 
   it("gives the place back when a message is refused, so the sender can correct it", async () => {

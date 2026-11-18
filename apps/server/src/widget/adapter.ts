@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -50,6 +50,8 @@ export interface WidgetOptions {
   identitySecrets: IdentitySecrets;
   // Folder where the attached files are written, under random names.
   attachmentsDir: string;
+  // Most bytes the files of the folder may take: beyond, new files are refused.
+  attachmentsQuotaBytes: number;
   logger: WidgetLogger;
   // Behind a reverse proxy, every request comes from the proxy: the address of the person is the
   // last one the proxy added to X-Forwarded-For. Only set it when such a proxy is in front.
@@ -108,6 +110,18 @@ type Env = { Bindings: { incoming?: { socket: { remoteAddress?: string } } } };
 
 const busy = "Le service reçoit beaucoup de demandes. Merci de réessayer plus tard.";
 
+// Bytes taken by the files already in the folder, or 0 before the first file.
+async function folderSize(folder: string): Promise<number> {
+  const names = await readdir(folder).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  });
+  const sizes = await Promise.all(names.map(async (name) => (await stat(join(folder, name))).size));
+  return sizes.reduce((total, size) => total + size, 0);
+}
+
 function fail(c: Context<Env>, status: 400 | 404 | 413 | 429 | 503, error: string) {
   return c.json({ error }, status);
 }
@@ -152,6 +166,7 @@ export async function createWidgetApp(options: WidgetOptions) {
   });
   const waiting = createWaitingCounter(unhandledAtStart.length);
   const uploads = createSlots(maxConcurrentUploads, maxWaitingUploads);
+  let storedBytes = await folderSize(options.attachmentsDir);
 
   // A person is verified only by a valid signature of the application of the project, for someone
   // who works on that project: an email typed in the widget proves nothing, and an application
@@ -233,6 +248,17 @@ export async function createWidgetApp(options: WidgetOptions) {
     );
   }
 
+  // Reserves room for the files before they are written, so messages received at the same time
+  // cannot together pass the quota. False when there is not enough room left.
+  function reserveRoom(files: AcceptedFile[]): boolean {
+    const bytes = files.reduce((total, file) => total + file.bytes.length, 0);
+    if (storedBytes + bytes > options.attachmentsQuotaBytes) {
+      return false;
+    }
+    storedBytes += bytes;
+    return true;
+  }
+
   // A message that will be stored and handled: the place it took among the waiting ones is given
   // back if it ends up not stored.
   interface Ticket {
@@ -248,6 +274,19 @@ export async function createWidgetApp(options: WidgetOptions) {
     message: { text: string; subject: string | null; sender: string; raw: WidgetRaw },
     files: AcceptedFile[],
   ) {
+    if (!reserveRoom(files)) {
+      logger.error(
+        "A file was refused",
+        new Error(
+          `The attachments folder reached its quota of ${options.attachmentsQuotaBytes} bytes`,
+        ),
+      );
+      return fail(
+        c,
+        503,
+        "Les fichiers ne peuvent pas être reçus pour le moment. Envoyez votre message sans fichier.",
+      );
+    }
     const conversation = externalIdOf(token);
     const externalId = randomUUID();
     const stored = await storeInboundMessage(db, {

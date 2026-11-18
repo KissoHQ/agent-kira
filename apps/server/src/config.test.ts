@@ -111,8 +111,18 @@ describe("loadWidgetEnv", () => {
       WIDGET_IDENTITY_SECRETS: new Map(),
       ATTACHMENTS_DIR: "/var/lib/request-agent/attachments",
       WIDGET_TRUST_PROXY: false,
+      WIDGET_ATTACHMENTS_QUOTA_MB: 2048,
     });
     expect(loadWidgetEnv(widget)?.WIDGET_IDENTITY_SECRETS).toEqual(new Map());
+  });
+
+  it("reads the quota of the attached files, in megabytes", () => {
+    expect(
+      loadWidgetEnv({ ...widget, WIDGET_ATTACHMENTS_QUOTA_MB: "500" })?.WIDGET_ATTACHMENTS_QUOTA_MB,
+    ).toBe(500);
+    expect(() => loadWidgetEnv({ ...widget, WIDGET_ATTACHMENTS_QUOTA_MB: "0" })).toThrow(
+      /WIDGET_ATTACHMENTS_QUOTA_MB/,
+    );
   });
 
   it("trusts a reverse proxy only when asked", () => {

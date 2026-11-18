@@ -75,6 +75,7 @@ export async function startWidgetIfConfigured(
     allowedOrigins: env.WIDGET_ALLOWED_ORIGINS,
     identitySecrets: env.WIDGET_IDENTITY_SECRETS,
     attachmentsDir: env.ATTACHMENTS_DIR,
+    attachmentsQuotaBytes: env.WIDGET_ATTACHMENTS_QUOTA_MB * 1024 * 1024,
     trustProxy: env.WIDGET_TRUST_PROXY,
     logger: {
       info: (message) => {

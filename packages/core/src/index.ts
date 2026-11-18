@@ -149,3 +149,4 @@ export {
   type StaffMember,
 } from "./staff/accounts.ts";
 export { closeSession, findSession, openSession, sessionDurationMs } from "./staff/sessions.ts";
+export { worksOnProjectByEmail } from "./contacts/membership.ts";

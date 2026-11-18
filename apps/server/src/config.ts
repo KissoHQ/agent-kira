@@ -101,6 +101,9 @@ const widgetEnvSchema = z.object({
     z.string().transform(parseIdentitySecrets),
   ),
   ATTACHMENTS_DIR: z.string().refine(isAbsolute, { message: "Must be an absolute path" }),
+  // Set to true only behind a reverse proxy that adds the address of the person to X-Forwarded-For,
+  // so the limits of the widget count people and not the proxy.
+  WIDGET_TRUST_PROXY: z.stringbool().default(false),
 });
 
 export type Env = z.infer<typeof envSchema>;

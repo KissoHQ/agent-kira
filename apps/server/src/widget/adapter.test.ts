@@ -19,7 +19,8 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { HandledMessage } from "../mastra/agents/handle-message";
-import { createWidgetApp, maxWaitingMessages } from "./adapter";
+import { createWidgetApp } from "./adapter";
+import { maxWaitingMessages, maxWaitingPerAddress, messageRate } from "./admission";
 import { signIdentity } from "./identity";
 
 const getDatabase = useTestDatabase();
@@ -64,6 +65,9 @@ function newMessage(fields: Record<string, string>, files: File[] = []) {
   }
   return { method: "POST", body: form, headers: { origin: portal } };
 }
+
+// Where a request comes from, as the Node.js server gives it to the app.
+const fromAddress = (address: string) => ({ incoming: { socket: { remoteAddress: address } } });
 
 // What the portal application gives the widget for the person signed in.
 function signed(email = bruno) {
@@ -315,19 +319,89 @@ describe("the widget channel", () => {
     ).toBe(null);
   });
 
-  it("asks people to come back later when too many messages wait for the agent", async () => {
+  it("lets exactly the allowed number of messages wait, even when they arrive together", async () => {
     const widget = await widgetFor(() => new Promise(() => undefined));
-    const send = () =>
+
+    const responses = await Promise.all(
+      Array.from({ length: maxWaitingMessages + 10 }, async (_, index) =>
+        widget.app.request(
+          "/widget/messages",
+          newMessage({ kind: "QUESTION", text: "Bonjour", ...signed() }),
+          fromAddress(`198.51.100.${index}`),
+        ),
+      ),
+    );
+
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 202)).toHaveLength(maxWaitingMessages);
+    expect(statuses.filter((status) => status === 503)).toHaveLength(10);
+    expect(await getDatabase().select().from(messages)).toHaveLength(maxWaitingMessages);
+  });
+
+  it("keeps one address from filling the queue of the agent", async () => {
+    const widget = await widgetFor(() => new Promise(() => undefined));
+    const send = (address: string) =>
       widget.app.request(
         "/widget/messages",
         newMessage({ kind: "QUESTION", text: "Bonjour", ...signed() }),
+        fromAddress(address),
       );
-    for (let sent = 0; sent < maxWaitingMessages; sent += 1) {
+    for (let sent = 0; sent < maxWaitingPerAddress; sent += 1) {
       // oxlint-disable-next-line no-await-in-loop
-      await send();
+      expect((await send("203.0.113.7")).status).toBe(202);
     }
 
-    expect((await send()).status).toBe(503);
+    const again = await send("203.0.113.7");
+    expect(again.status).toBe(429);
+    expect(await again.json()).toEqual({
+      error: "Vos messages précédents sont en cours de traitement. Merci d'attendre leur réponse.",
+    });
+    expect((await send("198.51.100.4")).status).toBe(202);
+  });
+
+  it("limits the messages of one address over time, and says when to come back", async () => {
+    const widget = await widgetFor();
+    for (let sent = 0; sent < messageRate.max; sent += 1) {
+      // Each one is handled before the next, so the queue never fills.
+      // oxlint-disable-next-line no-await-in-loop
+      await widget.app.request(
+        "/widget/messages",
+        newMessage({ kind: "QUESTION", text: "Bonjour", ...signed() }),
+        fromAddress("203.0.113.7"),
+      );
+      // oxlint-disable-next-line no-await-in-loop
+      await widget.idle();
+    }
+
+    const refused = await widget.app.request(
+      "/widget/messages",
+      newMessage({ kind: "QUESTION", text: "Bonjour", ...signed() }),
+      fromAddress("203.0.113.7"),
+    );
+
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(await getDatabase().select().from(messages)).toHaveLength(messageRate.max * 2);
+  });
+
+  it("gives the place back when a message is refused, so the sender can correct it", async () => {
+    const widget = await widgetFor(() => new Promise(() => undefined));
+    for (let sent = 0; sent < maxWaitingPerAddress + 2; sent += 1) {
+      // oxlint-disable-next-line no-await-in-loop
+      const refused = await widget.app.request(
+        "/widget/messages",
+        newMessage({ kind: "BUG", text: " ", ...signed() }),
+        fromAddress("203.0.113.7"),
+      );
+      expect(refused.status).toBe(400);
+    }
+
+    const accepted = await widget.app.request(
+      "/widget/messages",
+      newMessage({ kind: "BUG", text: "Panne", ...signed() }),
+      fromAddress("203.0.113.7"),
+    );
+    expect(accepted.status).toBe(202);
   });
 
   it("handles at start the messages left unhandled by a restart", async () => {

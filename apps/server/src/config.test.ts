@@ -110,8 +110,16 @@ describe("loadWidgetEnv", () => {
       WIDGET_ALLOWED_ORIGINS: ["https://portal.example.com", "http://localhost:4114"],
       WIDGET_IDENTITY_SECRETS: new Map(),
       ATTACHMENTS_DIR: "/var/lib/request-agent/attachments",
+      WIDGET_TRUST_PROXY: false,
     });
     expect(loadWidgetEnv(widget)?.WIDGET_IDENTITY_SECRETS).toEqual(new Map());
+  });
+
+  it("trusts a reverse proxy only when asked", () => {
+    expect(loadWidgetEnv({ ...widget, WIDGET_TRUST_PROXY: "true" })?.WIDGET_TRUST_PROXY).toBe(true);
+    expect(() => loadWidgetEnv({ ...widget, WIDGET_TRUST_PROXY: "maybe" })).toThrow(
+      /WIDGET_TRUST_PROXY/,
+    );
   });
 
   it("reads one secret per project", () => {

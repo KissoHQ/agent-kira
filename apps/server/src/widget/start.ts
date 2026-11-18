@@ -6,7 +6,7 @@ import { loadWidgetEnv } from "../config";
 import { createWidgetApp } from "./adapter";
 
 // The widget app once started. Requests that arrive before, or without a widget, are not found.
-let widget: { fetch: (request: Request) => Response | Promise<Response> } | undefined;
+let widget: Awaited<ReturnType<typeof createWidgetApp>>["app"] | undefined;
 
 // Origins the applications embedding the widget run on. A wrong configuration allows none here,
 // and is reported when the widget starts, without stopping the rest of the server.
@@ -27,8 +27,11 @@ export function widgetRoutes(): ApiRoute[] {
       method: "ALL",
       requiresAuth: false,
       cors: { origin: allowedOrigins(), allowMethods: ["GET", "POST"] },
+      // The Node.js bindings of the request go along, so the widget knows the address it came from.
       handler: (c) =>
-        widget === undefined ? c.json({ error: "Not found" }, 404) : widget.fetch(c.req.raw),
+        widget === undefined
+          ? c.json({ error: "Not found" }, 404)
+          : widget.fetch(c.req.raw, c.env as { incoming?: { socket: { remoteAddress?: string } } }),
     }),
   ];
 }
@@ -54,6 +57,7 @@ export async function startWidgetIfConfigured(
     allowedOrigins: env.WIDGET_ALLOWED_ORIGINS,
     identitySecrets: env.WIDGET_IDENTITY_SECRETS,
     attachmentsDir: env.ATTACHMENTS_DIR,
+    trustProxy: env.WIDGET_TRUST_PROXY,
     logger: {
       info: (message) => {
         logger.info(message);

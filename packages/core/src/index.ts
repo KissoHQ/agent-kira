@@ -150,3 +150,4 @@ export {
 } from "./staff/accounts.ts";
 export { closeSession, findSession, openSession, sessionDurationMs } from "./staff/sessions.ts";
 export { worksOnProjectByEmail } from "./contacts/membership.ts";
+export { type Admission, createRateLimiter, type RateLimit } from "./limits/rate-limiter.ts";

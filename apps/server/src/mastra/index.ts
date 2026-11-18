@@ -28,7 +28,9 @@ const logger = mastra.getLogger();
 // One database pool and one classifier for every channel, created only when a channel needs them.
 let channelHandler: ChannelHandler | undefined;
 const handler = () => {
-  channelHandler ??= createChannelHandler(requestAgent);
+  channelHandler ??= createChannelHandler(requestAgent, (error) => {
+    logger.error("Database connection lost", { error: error.message });
+  });
   return channelHandler;
 };
 

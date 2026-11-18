@@ -145,6 +145,24 @@ describe("createRequest with a possible duplicate", () => {
     expect(message?.requestId).not.toBeNull();
   });
 
+  it("files a new request when a person closed the candidate while the model was comparing", async () => {
+    const cart = await file(alice, "Panier vidé", "Le panier se vide.");
+    const turn = await turnFor(alice, "Sur le SHOP, le panier se vide encore.", {
+      title: "Panier vidé",
+    });
+    await getDatabase().update(requests).set({ status: "CLOSED" });
+
+    const result = await createRequest(
+      getAppDatabase(),
+      { ...turn, duplicate: { reference: cart, confidence: 0.9 } },
+      {},
+    );
+
+    expect(result).toMatchObject({ ok: true, value: { created: true, duplicate: false } });
+    const [, second] = await getDatabase().select().from(requests).orderBy(requests.number);
+    expect(second).toMatchObject({ status: "NEW", duplicateOfRequestId: null });
+  });
+
   it("files a new request linked to the candidate, for review, when the model is not confident", async () => {
     const cart = await file(alice, "Panier vidé", "Le panier se vide.");
     const turn = await turnFor(alice, "Sur le SHOP, le panier se vide encore.", {

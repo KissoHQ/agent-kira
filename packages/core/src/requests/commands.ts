@@ -9,6 +9,7 @@ import {
   type ReviewReason,
   reviewReasons,
 } from "./classified-turn.ts";
+import { openStatuses } from "./duplicates.ts";
 import type {
   CreateRequestInput,
   ForwardToTeamInput,
@@ -88,6 +89,9 @@ export interface CreatedRequest {
 
 type TurnMessage = Awaited<ReturnType<typeof lockTurnMessage>>;
 type RequestStatus = (typeof requests.$inferSelect)["status"];
+
+const isOpen = (status: RequestStatus): boolean =>
+  (openStatuses as readonly RequestStatus[]).includes(status);
 
 // The project a new request is filed under: the one asked for, when the sender may use it, or the
 // one identified by the rules.
@@ -192,10 +196,13 @@ export function createRequest(
     if (!project.ok) {
       return project;
     }
-    const duplicateOf =
+    const candidate =
       turn.duplicate === null
         ? undefined
         : await lockVisibleRequest(tx, turn, turn.duplicate.reference);
+    // The candidate was open when the model compared it. If a person closed it since, the message
+    // is about a problem that came back: it gets a request of its own.
+    const duplicateOf = candidate !== undefined && isOpen(candidate.status) ? candidate : undefined;
     // A confident duplicate gets the message instead of a second request about the same problem.
     if (
       turn.duplicate !== null &&
@@ -287,6 +294,12 @@ export function requestClarification(
       const project = turn.project.status === "identified" ? turn.project.projectId : null;
       requestId = await insertRequest(tx, turn, message, project, "WAITING_FOR_INFO");
     } else {
+      // Locked before counting, so two messages answered at the same time cannot both pass the limit.
+      const [request] = await tx
+        .select({ status: requests.status })
+        .from(requests)
+        .where(eq(requests.id, requestId))
+        .for("update");
       const [asked] = await tx
         .select({ value: count() })
         .from(events)
@@ -295,11 +308,6 @@ export function requestClarification(
         await tx.update(requests).set({ needsReview: true }).where(eq(requests.id, requestId));
         return fail("CLARIFICATION_LIMIT");
       }
-      const [request] = await tx
-        .select({ status: requests.status })
-        .from(requests)
-        .where(eq(requests.id, requestId))
-        .for("update");
       if (request !== undefined && request.status !== "WAITING_FOR_INFO") {
         await setStatus(tx, requestId, request.status, "WAITING_FOR_INFO", message);
       }
@@ -403,6 +411,9 @@ export function updateRequest(
   input: UpdateRequestInput,
 ): Promise<Result<RequestView, "NOT_FOUND" | "PROJECT_NOT_ALLOWED" | "NO_CHANGES">> {
   return db.transaction(async (tx) => {
+    // Every command locks the message before the request, so two commands of one turn cannot each
+    // hold the lock the other waits for.
+    const message = await lockTurnMessage(tx, turn);
     const request = await lockVisibleRequest(tx, turn, input.reference);
     if (request === undefined) {
       return fail("NOT_FOUND");
@@ -435,7 +446,6 @@ export function updateRequest(
       return fail("NO_CHANGES");
     }
 
-    const message = await lockTurnMessage(tx, turn);
     await tx.update(requests).set(values).where(eq(requests.id, request.id));
     await tx.insert(events).values({
       requestId: request.id,
@@ -455,11 +465,11 @@ export function addMessageToRequest(
   input: RequestReferenceInput,
 ): Promise<Result<RequestView, "NOT_FOUND" | "MESSAGE_ALREADY_LINKED">> {
   return db.transaction(async (tx) => {
+    const message = await lockTurnMessage(tx, turn);
     const request = await lockVisibleRequest(tx, turn, input.reference);
     if (request === undefined) {
       return fail("NOT_FOUND");
     }
-    const message = await lockTurnMessage(tx, turn);
     if (message.requestId === request.id) {
       return succeed(await loadView(tx, request.id));
     }

@@ -5,7 +5,11 @@ import { loadWebEnv } from "./config.ts";
 import { listen } from "./listen.ts";
 
 const env = loadWebEnv();
-const { db, close } = connectDatabase(env.APP_DATABASE_URL);
+const { db, close } = connectDatabase(env.APP_DATABASE_URL, {
+  onError: (error) => {
+    console.error("Database connection lost:", error.message);
+  },
+});
 const app = createWebApp({
   db,
   timeZone: env.WEB_TIME_ZONE,

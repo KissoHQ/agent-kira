@@ -24,8 +24,13 @@ if (env === undefined || !env.WIDGET_ALLOWED_ORIGINS.includes(origin)) {
   console.error(`Add ${origin} to WIDGET_ALLOWED_ORIGINS in .env, then restart the agent server.`);
   process.exit(1);
 }
-if (!values.anonymous && env.WIDGET_IDENTITY_SECRET === undefined) {
-  console.error("Set WIDGET_IDENTITY_SECRET in .env, or run with --anonymous.");
+// The demo page is the portal of Globex: it signs with the secret of the PORTAL project.
+const project = "PORTAL";
+const secret = env.WIDGET_IDENTITY_SECRETS.get(project);
+if (!values.anonymous && secret === undefined) {
+  console.error(
+    `Set WIDGET_IDENTITY_SECRETS=${project}=<secret> in .env, or run with --anonymous.`,
+  );
   process.exit(1);
 }
 
@@ -77,10 +82,10 @@ td { padding: 14px 16px; border-top: 1px solid #edf1f6; }
 
 function page(): string {
   const identity =
-    values.anonymous || env?.WIDGET_IDENTITY_SECRET === undefined
+    values.anonymous || secret === undefined
       ? ""
       : (() => {
-          const signed = signIdentity(env.WIDGET_IDENTITY_SECRET, values.email, new Date());
+          const signed = signIdentity(secret, values.email, project, new Date());
           return ` data-user-email="${attribute(signed.email)}" data-user-expires="${signed.expires}" data-user-signature="${signed.signature}"`;
         })();
   const who = values.anonymous ? "Visiteur" : attribute(values.email);
@@ -130,7 +135,7 @@ function page(): string {
         </table>
       </div>
     </main>
-    <script src="${attribute(values.server)}/widget/widget.js" data-project="PORTAL"${identity} defer></script>
+    <script src="${attribute(values.server)}/widget/widget.js" data-project="${project}"${identity} defer></script>
   </body>
 </html>`;
 }

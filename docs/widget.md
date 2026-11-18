@@ -6,11 +6,13 @@ The widget has no business logic: it sends what the person writes to the agent s
 
 ## Configuration of the agent server
 
-| Variable                 | Role                                                                                                                                                        | Example value                         |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `WIDGET_ALLOWED_ORIGINS` | Origins of the applications that embed the widget, separated by commas. Without it, the server runs without the widget                                      | `https://portal.example.com`          |
-| `WIDGET_IDENTITY_SECRET` | Optional. Secret shared with the applications, at least 32 characters, to sign the identity of the person signed in. Without it, every person is unverified | Generated with `openssl rand -hex 32` |
-| `ATTACHMENTS_DIR`        | Absolute path of the folder where the files people attach are written. The web interface of the team reads the same folder to download them                 | `/var/lib/request-agent/attachments`  |
+| Variable                      | Role                                                                                                                                                                                                                                                       | Example value                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `WIDGET_ALLOWED_ORIGINS`      | Origins of the applications that embed the widget, separated by commas. Without it, the server runs without the widget                                                                                                                                     | `https://portal.example.com`                               |
+| `WIDGET_IDENTITY_SECRETS`     | Optional. One secret per project, `PROJECT=secret` separated by commas, each at least 32 characters and given only to the application of that project, to sign the identity of the person signed in. A project without a secret has only unverified people | `PORTAL=` followed by the output of `openssl rand -hex 32` |
+| `ATTACHMENTS_DIR`             | Absolute path of the folder where the files people attach are written. The web interface of the team reads the same folder to download them                                                                                                                | `/var/lib/request-agent/attachments`                       |
+| `WIDGET_ATTACHMENTS_QUOTA_MB` | Optional. Most space the attached files may take, in megabytes. Beyond, files are refused and messages without files are still taken                                                                                                                       | `2048` (default)                                           |
+| `WIDGET_TRUST_PROXY`          | Optional. `true` only behind a reverse proxy that adds the address of the person to `X-Forwarded-For`, so the limits below count people and not the proxy                                                                                                  | `false` (default)                                          |
 
 Restart the agent server after changing them. The log shows `Widget listening`.
 
@@ -38,21 +40,28 @@ The server of the application, never the browser, computes the signature for the
 
 - `email`: the address of the person, in lower case;
 - `expires`: a Unix time in seconds, at most 24 hours ahead;
-- `signature`: the HMAC-SHA256, in hexadecimal, of the email, a line break and the expiry, with `WIDGET_IDENTITY_SECRET`.
+- `signature`: the HMAC-SHA256, in hexadecimal, of the email, a line break, the project key in capitals, a line break and the expiry, with the secret of that project in `WIDGET_IDENTITY_SECRETS`.
 
-In Node.js:
+In Node.js, for the PORTAL project:
 
 ```js
 import { createHmac } from "node:crypto";
 
 const email = user.email.trim().toLowerCase();
+const project = "PORTAL";
 const expires = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
-const signature = createHmac("sha256", process.env.WIDGET_IDENTITY_SECRET)
-  .update(`${email}\n${expires}`)
+const signature = createHmac("sha256", process.env.PORTAL_WIDGET_SECRET)
+  .update(`${email}\n${project}\n${expires}`)
   .digest("hex");
 ```
 
-The agent then recognizes the person as a verified contact, with their organization and projects, as for an email that passed DMARC. A signature that is missing, wrong or expired makes the person unverified: their message is filed for a review.
+The agent then recognizes the person as a verified contact, with their organization and projects, as for an email that passed DMARC. The person is unverified, and their message filed for a review, when:
+
+- the signature is missing, wrong or expired;
+- it was made with the secret of another project, so an application cannot vouch for the people of another client;
+- the person does not work on the project of the application.
+
+The widget signs every message again with the attributes of the page, replies included. A reply without a valid signature for the same person is unverified, even in a conversation that started verified: someone else on the same computer cannot write in their name. Each person signed in has their own list of conversations in the browser.
 
 ## What the person can do
 
@@ -72,9 +81,24 @@ The script uses these routes of the agent server. They need no Mastra session, a
 | `GET /widget/widget.js`                      | The script of the widget                                                                                                                                                        |
 | `POST /widget/messages`                      | A new message, as `multipart/form-data`: `kind`, `text`, `email`, optional `expires`, `signature`, `project` and `files`. Answers `202` with the conversation token             |
 | `GET /widget/conversations/:token`           | The messages, the answers of the agent, the requests created with their status as a sentence (`status`) and as a code (`statusCode`), and whether a message waits for the agent |
-| `POST /widget/conversations/:token/messages` | A reply: `text` and optional `files`. It keeps the person of the conversation                                                                                                   |
+| `POST /widget/conversations/:token/messages` | A reply: `text`, optional `files`, and the `email`, `expires` and `signature` of the person signed in. It keeps the person of the conversation                                  |
 
-The token is the only key to a conversation: the widget keeps it in the storage of the browser.
+The token is the only key to a conversation: the widget keeps it in the storage of the browser. A conversation without a message for 90 days is closed to its token: the routes answer `404`, and its requests stay in the web interface of the team.
+
+## Limits of use
+
+The routes are public, so each network address gets a share of the server:
+
+| Limit                                         | Value                                  | Answer beyond it                                                |
+| --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------- |
+| Messages sent by one address                  | 10 every 10 minutes                    | `429`, with `Retry-After`                                       |
+| Messages of one address waiting for the agent | 3                                      | `429`: "Vos messages précédents sont en cours de traitement…"   |
+| Messages waiting for the agent, in total      | 20                                     | `503`: "Le service reçoit beaucoup de demandes…"                |
+| Messages read in their files at the same time | 4, then 50 waiting                     | `503`                                                           |
+| Reads of conversations by one address         | 300 every 5 minutes (one every second) | `429`, with `Retry-After`                                       |
+| Space taken by the files                      | `WIDGET_ATTACHMENTS_QUOTA_MB`          | `503`: "Les fichiers ne peuvent pas être reçus pour le moment…" |
+
+These counts are kept in memory: the server runs as one process.
 
 ## Trying it locally
 

@@ -21,27 +21,33 @@ export interface ParsedEmail {
   sentAt: Date;
   // The new part of the message, without the quoted history and the signature.
   text: string;
-  // The whole text, kept with the original message.
-  fullText: string;
   // Header fields in the order of the message: the first ones were added by the last server.
   headers: { key: string; value: string }[];
   attachments: EmailAttachment[];
 }
 
+// The beginning of an email is enough to read the request, and the stored text is cut shorter still
+// (see the business core). Cutting first keeps the conversions below fast whatever the email holds.
+const maxReadLength = 100_000;
+
 // A plain text version of an HTML-only email, good enough for the classifier to read.
 function htmlToText(html: string): string {
-  return html
-    .replaceAll(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replaceAll(/<br\s*\/?>|<\/(p|div|li|tr|h[1-6])>/gi, "\n")
-    .replaceAll(/<[^>]+>/g, "")
-    .replaceAll("&nbsp;", " ")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'")
-    .replaceAll("&amp;", "&")
-    .replaceAll(/\n{3,}/g, "\n\n")
-    .trim();
+  return (
+    html
+      .slice(0, maxReadLength)
+      .replaceAll(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, "")
+      .replaceAll(/<br\s*\/?>|<\/(p|div|li|tr|h[1-6])>/gi, "\n")
+      // A tag ends at the next bracket, so a run of "<" without ">" is not scanned again and again.
+      .replaceAll(/<[^<>]+>/g, "")
+      .replaceAll("&nbsp;", " ")
+      .replaceAll("&lt;", "<")
+      .replaceAll("&gt;", ">")
+      .replaceAll("&quot;", '"')
+      .replaceAll("&#39;", "'")
+      .replaceAll("&amp;", "&")
+      .replaceAll(/\n{3,}/g, "\n\n")
+      .trim()
+  );
 }
 
 // Without the earlier messages quoted in a reply, the classifier reads what the sender just wrote.
@@ -60,7 +66,10 @@ export async function parseEmail(source: Uint8Array): Promise<ParsedEmail> {
   if (from === undefined || from === "") {
     throw new Error("The email has no sender address");
   }
-  const fullText = email.text ?? (email.html === undefined ? "" : htmlToText(email.html));
+  const fullText = (email.text ?? (email.html === undefined ? "" : htmlToText(email.html))).slice(
+    0,
+    maxReadLength,
+  );
   const recipients = [...(email.to ?? []), ...(email.cc ?? [])]
     .map((recipient) => recipient.address?.toLowerCase() ?? "")
     .filter((address) => address !== "");
@@ -76,7 +85,6 @@ export async function parseEmail(source: Uint8Array): Promise<ParsedEmail> {
     subject: email.subject ?? null,
     sentAt: email.date === undefined ? new Date() : new Date(email.date),
     text: newPart(fullText),
-    fullText,
     headers: email.headers.map(({ key, value }) => ({ key, value })),
     attachments: email.attachments.map((attachment) => ({
       filename: attachment.filename ?? "unnamed",

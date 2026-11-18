@@ -29,21 +29,31 @@ function parseAuthenticationResults(value: string) {
   return { authservId, result, headerFrom };
 }
 
+export interface SenderCheck {
+  trust: Trust;
+  // True when our receiving server found that DMARC failed for the domain of the From address: the
+  // address most likely belongs to someone else, who must not get any answer.
+  forged: boolean;
+}
+
 // A sender is verified only by the Authentication-Results header that the receiving server added,
 // which is the first one of the message: anyone can write such headers in the email they send.
 // DMARC must pass for the domain of the From address.
-export function senderTrust(email: ParsedEmail, settings: TrustSettings): Trust {
+export function checkSender(email: ParsedEmail, settings: TrustSettings): SenderCheck {
   if (settings.trustAllSenders) {
-    return "VERIFIED";
+    return { trust: "VERIFIED", forged: false };
   }
   const added = header(email, "authentication-results");
   if (settings.trustedAuthservId === undefined || added === undefined) {
-    return "UNVERIFIED";
+    return { trust: "UNVERIFIED", forged: false };
   }
   const results = parseAuthenticationResults(added);
   const fromOurServer = results.authservId === settings.trustedAuthservId.toLowerCase();
   const aligned = results.headerFrom === domainOf(email.from);
-  return fromOurServer && results.result === "pass" && aligned ? "VERIFIED" : "UNVERIFIED";
+  return {
+    trust: fromOurServer && results.result === "pass" && aligned ? "VERIFIED" : "UNVERIFIED",
+    forged: fromOurServer && results.result === "fail" && aligned,
+  };
 }
 
 // Robot addresses. The "no reply" ones are also recognized with a prefix, such as

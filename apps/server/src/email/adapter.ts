@@ -1,10 +1,13 @@
 import {
   conversationOfMessage,
+  conversationSenderDomains,
+  createRateLimiter,
   listUnhandledMessages,
   markHandled,
   type Database,
   storeInboundMessage,
   storeOutboundMessage,
+  type RateLimit,
   type TurnInput,
 } from "@request-agent/core";
 
@@ -13,7 +16,7 @@ import { z } from "zod";
 import type { HandledMessage } from "../mastra/agents/handle-message";
 import { createSerialQueue, defaultRetryDelaysMs, handleReliably } from "../reliable-handling";
 import { type ParsedEmail, parseEmail } from "./parse";
-import { isAutomatic, senderTrust, type TrustSettings } from "./policy";
+import { checkSender, isAutomatic, type SenderCheck, type TrustSettings } from "./policy";
 
 // The parts of the mail clients the adapter uses, so tests can replace them.
 export interface Mailbox {
@@ -60,17 +63,45 @@ export const unavailableReply =
 
 const storedSource = z.object({ source: z.string() });
 
+// The From address of an email that is not verified can be forged, to make the agent write to
+// someone else from the domain of the company. Such a sender never gets a text written from their
+// message: only this fixed notice, with the reference of the request when there is one.
+export function acknowledgementOf(reply: string): string {
+  const reference = /REQ-\d{1,9}/.exec(reply)?.[0];
+  const notice =
+    "Bonjour,\n\nNous avons bien reçu votre message. L'équipe va l'examiner et reviendra vers vous si nécessaire.";
+  return reference === undefined ? notice : `${notice}\n\nRéférence : ${reference}`;
+}
+
+// Answers sent to one address. A verified sender may write often; a sender who is not verified,
+// whose address may be someone else's, gets at most one notice a day, so the agent cannot be used to
+// send many emails to a victim. These counts also stop a loop with another automatic system.
+export const verifiedReplyRate: RateLimit = {
+  max: 30,
+  windowMs: 60 * 60 * 1000,
+  maxKeys: 10_000,
+};
+export const unverifiedReplyRate: RateLimit = {
+  max: 1,
+  windowMs: 24 * 60 * 60 * 1000,
+  maxKeys: 100_000,
+};
+
 // The thread an email belongs to, named after its first message. A reply that lost its References
-// header is still attached through the message it answers.
+// header is still attached through the message it answers. The sender chooses these headers: an
+// email that names a known thread where nobody of its domain wrote starts its own thread instead.
 async function threadOf(db: Database, email: ParsedEmail): Promise<string> {
   const [root] = email.references;
-  if (root !== undefined) {
-    return root;
+  let named: string | undefined = root;
+  if (named === undefined && email.inReplyTo !== null) {
+    named = (await conversationOfMessage(db, "EMAIL", email.inReplyTo)) ?? email.inReplyTo;
   }
-  if (email.inReplyTo !== null) {
-    return (await conversationOfMessage(db, "EMAIL", email.inReplyTo)) ?? email.inReplyTo;
+  if (named === undefined) {
+    return email.messageId;
   }
-  return email.messageId;
+  const domains = await conversationSenderDomains(db, "EMAIL", named);
+  const domain = email.from.slice(email.from.lastIndexOf("@") + 1);
+  return domains === undefined || domains.includes(domain) ? named : email.messageId;
 }
 
 // Keeps one "Re:" and adds the request reference, so people and mail clients follow the thread.
@@ -89,6 +120,8 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
 }> {
   const { db, logger } = options;
   const queue = createSerialQueue();
+  const verifiedReplies = createRateLimiter(verifiedReplyRate);
+  const unverifiedReplies = createRateLimiter(unverifiedReplyRate);
 
   async function reply(email: ParsedEmail, thread: string, text: string): Promise<void> {
     const sent = await options.sender.send({
@@ -111,15 +144,41 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
     });
   }
 
+  // Sends an answer within the rules for the sender: nothing to an address whose domain failed
+  // DMARC, the fixed notice to a sender who is not verified, and a bounded number of emails to one
+  // address. A fixed text of the system, such as the unavailability notice, is sent as it is.
+  async function answer(
+    email: ParsedEmail,
+    thread: string,
+    sender: SenderCheck,
+    text: { kind: "agent" | "system"; value: string },
+  ): Promise<void> {
+    if (sender.forged) {
+      logger.info(`No answer to ${email.messageId}: DMARC failed for the domain of its sender`);
+      return;
+    }
+    const verified = sender.trust === "VERIFIED";
+    if (!(verified ? verifiedReplies : unverifiedReplies).take(email.from).allowed) {
+      logger.info(`No answer to ${email.messageId}: its sender reached the limit of answers`);
+      return;
+    }
+    await reply(
+      email,
+      thread,
+      verified || text.kind === "system" ? text.value : acknowledgementOf(text.value),
+    );
+  }
+
   async function process(email: ParsedEmail, thread: string, messageId: string): Promise<void> {
     const ownAddress = options.address.toLowerCase();
+    const sender = checkSender(email, options.trust);
     try {
       const outcome = await handleReliably(
         db,
         options.handle,
         {
           messageId,
-          trust: senderTrust(email, options.trust),
+          trust: sender.trust,
           // An address dedicated to a project, such as one forwarded to the agent's mailbox.
           channelAddress: email.recipients.find((address) => address !== ownAddress) ?? ownAddress,
         },
@@ -131,13 +190,15 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
         return;
       }
       if (outcome.reply !== null) {
-        await reply(email, thread, outcome.reply);
+        await answer(email, thread, sender, { kind: "agent", value: outcome.reply });
       }
     } catch (error) {
       logger.error(`Email ${email.messageId} could not be handled`, error);
-      await reply(email, thread, unavailableReply).catch((replyError: unknown) => {
-        logger.error("The unavailability reply could not be sent", replyError);
-      });
+      await answer(email, thread, sender, { kind: "system", value: unavailableReply }).catch(
+        (replyError: unknown) => {
+          logger.error("The unavailability reply could not be sent", replyError);
+        },
+      );
     }
   }
 

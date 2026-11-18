@@ -262,9 +262,19 @@ At its first start, the agent reads the unread emails of the inbox: mark the wel
 
 ### What the agent does with an email
 
-The agent handles each new email, keeps it with its attachments' descriptions, and answers in the same thread, with the request reference in the subject. A reply is attached to its conversation through its `In-Reply-To` and `References` headers, and the history quoted in a reply is not given to the model. Automatic emails, such as out-of-office replies, mailing lists or bounces, are kept but neither handled nor answered, and the answers of the agent are marked `Auto-Submitted: auto-replied`, so robots do not answer each other.
+The agent handles each new email, keeps it with its attachments' descriptions, and answers in the same thread, with the request reference in the subject. A reply is attached to its conversation through its `In-Reply-To` and `References` headers, and the history quoted in a reply is not given to the model. An email that names a thread where nobody of its email domain wrote starts its own thread, so it never joins the conversation of another company. Automatic emails, such as out-of-office replies, mailing lists or bounces, are kept but neither handled nor answered, and the answers of the agent are marked `Auto-Submitted: auto-replied`, so robots do not answer each other.
 
 A sender is only verified by the `Authentication-Results` header that the receiving mail server adds, when it shows that DMARC passed for the sender's domain: set `EMAIL_TRUSTED_AUTHSERV_ID` to the name of that server. A sender can write such a header in the email itself, so any other one is ignored. The local mail server adds no such header: without `EMAIL_TRUST_LOCAL_SENDERS=true`, every sender is unverified there, and their requests wait for a review.
+
+The From address of an unverified email can be forged, to make the agent write to someone else from the company's domain. So the answers depend on the sender:
+
+| Sender                                              | Answer                                                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Verified                                            | The answer of the agent, at most 30 an hour to one address                                   |
+| Unverified                                          | A fixed notice, "Nous avons bien reçu votre message…", with the reference, at most one a day |
+| DMARC failed for its domain at the receiving server | Nothing: the request is filed for a review                                                   |
+
+`EMAIL_SECURE=false` is refused for a mail server on another machine: real servers are reached on their TLS ports, such as 993 for IMAP and 465 for SMTP.
 
 An address dedicated to a project, such as one forwarded to the agent's mailbox, is declared in `project_channels`.
 

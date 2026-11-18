@@ -116,3 +116,23 @@ export async function conversationOrigin(
   }
   return { ...first, lastMessageAt: last.at };
 }
+
+// The email domains of the people who wrote in a conversation, or undefined when the conversation
+// is unknown. An email that names a conversation of another company starts its own conversation
+// instead, so its classification never reads their messages; a colleague of the same company who
+// answers in the thread joins it.
+export async function conversationSenderDomains(
+  db: Database,
+  channel: Channel,
+  externalId: string,
+): Promise<string[] | undefined> {
+  const conversationId = await findConversation(db, channel, externalId);
+  if (conversationId === undefined) {
+    return undefined;
+  }
+  const rows = await db
+    .selectDistinct({ sender: messages.sender })
+    .from(messages)
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.direction, "INBOUND")));
+  return [...new Set(rows.map((row) => row.sender.slice(row.sender.lastIndexOf("@") + 1)))];
+}

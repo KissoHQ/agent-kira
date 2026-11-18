@@ -153,6 +153,20 @@ describe("sign-in", () => {
     expect(response.headers.get("set-cookie")).toBe(null);
   });
 
+  it("refuses a form too large to be a form of the interface, before reading it", async () => {
+    const response = await post("/login", { email, password: "x".repeat(100_000) });
+
+    expect(response.status).toBe(413);
+    expect(response.headers.get("set-cookie")).toBe(null);
+  });
+
+  it("refuses an email longer than any account can have", async () => {
+    const response = await post("/login", { email: `${"a".repeat(250)}@team.example`, password });
+
+    expect(response.status).toBe(401);
+    expect(await response.text()).toContain("E-mail ou mot de passe incorrect.");
+  });
+
   it("refuses a form sent from another site", async () => {
     const cookie = await signIn();
     const reference = await portalRequest("Le portail plante.");

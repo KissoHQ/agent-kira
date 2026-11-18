@@ -27,9 +27,14 @@ export interface ChannelHandler {
 
 // What every channel adapter needs: the database, with the restricted application role, and the
 // agent bound to the classifier and the knowledge base.
-export function createChannelHandler(agent: Agent): ChannelHandler {
+export function createChannelHandler(
+  agent: Agent,
+  onDatabaseError: (error: Error) => void,
+): ChannelHandler {
   const classifierEnv = loadClassifierEnv();
-  const { db } = connectDatabase(loadAppDatabaseEnv().APP_DATABASE_URL);
+  const { db } = connectDatabase(loadAppDatabaseEnv().APP_DATABASE_URL, {
+    onError: onDatabaseError,
+  });
   const ollama = {
     baseUrl: classifierEnv.OLLAMA_BASE_URL,
     model: classifierEnv.OLLAMA_MODEL,

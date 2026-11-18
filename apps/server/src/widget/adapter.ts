@@ -7,6 +7,7 @@ import {
   conversationOrigin,
   createRateLimiter,
   type Database,
+  listPendingReplies,
   listUnhandledMessages,
   readConversation,
   storeInboundMessage,
@@ -21,7 +22,12 @@ import { z } from "zod";
 
 import type { HandledMessage } from "../mastra/agents/handle-message";
 import { statusLabels } from "../mastra/agents/reply";
-import { createSerialQueue, defaultRetryDelaysMs, handleReliably } from "../reliable-handling";
+import {
+  createReplyDelivery,
+  createSerialQueue,
+  defaultRetryDelaysMs,
+  handleReliably,
+} from "../reliable-handling";
 import {
   createSlots,
   createWaitingCounter,
@@ -58,6 +64,8 @@ export interface WidgetOptions {
   trustProxy?: boolean;
   // Waits before handling a failed message again, after the first and second failures.
   retryDelaysMs?: number[];
+  // Waits before writing an answer again when the database refused it.
+  sendRetryDelaysMs?: number[];
   now?: () => Date;
 }
 
@@ -158,7 +166,10 @@ function all(value: unknown): unknown[] {
 export async function createWidgetApp(options: WidgetOptions) {
   const { db, logger } = options;
   const now = options.now ?? (() => new Date());
-  const queue = createSerialQueue();
+  const queue = createSerialQueue((error) => {
+    logger.error("A widget task failed", error);
+  });
+  const deliver = createReplyDelivery(db, queue, logger, options.sendRetryDelaysMs);
   const trustProxy = options.trustProxy ?? false;
   const messageLimiter = createRateLimiter(messageRate);
   const readLimiter = createRateLimiter(readRate);
@@ -192,13 +203,26 @@ export async function createWidgetApp(options: WidgetOptions) {
     return worksOnProjectByEmail(db, email, project);
   }
 
-  async function reply(conversation: string, messageId: string, answer: string): Promise<void> {
+  // Writes the answer kept with a handled message into its conversation, where the widget reads it,
+  // again later if the database refuses it.
+  function answer(storedMessageId: string, conversation: string, externalId: string, body: string) {
+    return deliver({
+      messageId: storedMessageId,
+      send: async () => {
+        await reply(conversation, externalId, body);
+        return undefined;
+      },
+      record: () => Promise.resolve(),
+    });
+  }
+
+  async function reply(conversation: string, messageId: string, body: string): Promise<void> {
     await storeOutboundMessage(db, {
       channel: "WIDGET",
       conversationExternalId: conversation,
       externalId: randomUUID(),
       sender: "agent",
-      bodyText: answer,
+      bodyText: body,
       raw: {},
       sentAt: now(),
       inReplyTo: messageId,
@@ -226,7 +250,7 @@ export async function createWidgetApp(options: WidgetOptions) {
       }
       waiting.release(address);
       if (outcome.reply !== null) {
-        await reply(conversation, externalId, outcome.reply);
+        await answer(input.messageId, conversation, externalId, outcome.reply);
       }
     } catch (error) {
       // The message stays unhandled and is handled again when the server restarts.
@@ -464,7 +488,17 @@ export async function createWidgetApp(options: WidgetOptions) {
     });
   });
 
-  // Messages stored before a restart but never handled are handled now, in their order.
+  // Answers kept but not written yet are written first, then the messages stored before a restart
+  // but never handled are handled, in their order.
+  const pending = await listPendingReplies(db, "WIDGET").catch((error: unknown) => {
+    logger.error("Pending widget answers could not be resumed", error);
+    return [];
+  });
+  for (const stored of pending) {
+    queue.push(() =>
+      answer(stored.messageId, stored.conversationExternalId, stored.externalId, stored.reply),
+    );
+  }
   for (const stored of unhandledAtStart) {
     const raw = rawSchema.safeParse(stored.raw);
     const input: TurnInput = {

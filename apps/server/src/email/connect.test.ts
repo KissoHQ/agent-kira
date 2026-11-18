@@ -206,3 +206,27 @@ describe("imapMailbox, after a restart", { timeout: 30_000 }, () => {
     expect(await subjectsOf(await watchOnce(memoryCursorStore()))).toEqual(["Encore non lu"]);
   });
 });
+
+describe("imapMailbox, while the mail server is unreachable", { timeout: 20_000 }, () => {
+  it("keeps trying to open the mailbox, then stops when it is closed", async () => {
+    const errors: string[] = [];
+    // A port nobody listens on, as a mail server that is down.
+    const mailbox = imapMailbox(
+      { ...settings, imapPort: 1 },
+      { error: (message) => errors.push(message) },
+      memoryCursorStore(),
+      [20],
+    );
+
+    const watching = mailbox.watch(() => Promise.resolve());
+    await until(() => (errors.length >= 3 ? true : undefined));
+    await mailbox.close();
+    await watching;
+
+    expect(errors.slice(0, 3)).toEqual([
+      "The mailbox could not be opened, attempt 1",
+      "The mailbox could not be opened, attempt 2",
+      "The mailbox could not be opened, attempt 3",
+    ]);
+  });
+});

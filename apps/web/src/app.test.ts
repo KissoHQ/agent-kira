@@ -26,7 +26,7 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createWebApp } from "./app.ts";
-import { maxFailures } from "./sign-in-limiter.ts";
+import { addressLimits, emailLimits } from "./sign-in-limiter.ts";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useAppTestDatabase();
@@ -43,7 +43,14 @@ beforeEach(async () => {
   app = createWebApp({ db: getAppDatabase(), timeZone: "Europe/Paris" });
 });
 
-function post(path: string, fields: Record<string, string>, headers: Record<string, string> = {}) {
+// Where a request comes from, as the Node.js server gives it to the app.
+const fromAddress = (address: string) => ({ incoming: { socket: { remoteAddress: address } } });
+
+async function post(
+  path: string,
+  fields: Record<string, string>,
+  headers: Record<string, string> = {},
+): Promise<Response> {
   return app.request(path, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", origin, ...headers },
@@ -142,7 +149,7 @@ describe("sign-in", () => {
   });
 
   it("refuses even the right password after too many failures", async () => {
-    for (let failure = 0; failure < maxFailures; failure += 1) {
+    for (let failure = 0; failure < emailLimits.maxAttempts; failure += 1) {
       // oxlint-disable-next-line no-await-in-loop
       await post("/login", { email, password: "wrong password" });
     }
@@ -151,6 +158,98 @@ describe("sign-in", () => {
 
     expect(response.status).toBe(429);
     expect(response.headers.get("set-cookie")).toBe(null);
+    expect(response.headers.get("retry-after")).toBe("900");
+    expect(await response.text()).toContain("Réessayez dans 15 minutes.");
+  });
+
+  it("checks only the allowed number of passwords when many attempts arrive at once", async () => {
+    const responses = await Promise.all(
+      Array.from({ length: 20 }, () => post("/login", { email, password: "wrong password" })),
+    );
+
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 401)).toHaveLength(emailLimits.maxAttempts);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(20 - emailLimits.maxAttempts);
+  });
+
+  it("limits one network address trying a few passwords on many accounts", async () => {
+    const tries = Array.from({ length: addressLimits.maxAttempts }, (_, index) => index);
+    for (const index of tries) {
+      // oxlint-disable-next-line no-await-in-loop
+      await app.request(
+        "/login",
+        {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", origin },
+          body: new URLSearchParams({ email: `user-${index}@team.example`, password: "guess" }),
+        },
+        fromAddress("203.0.113.7"),
+      );
+    }
+
+    const sameAddress = await app.request(
+      "/login",
+      {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin },
+        body: new URLSearchParams({ email, password }),
+      },
+      fromAddress("203.0.113.7"),
+    );
+    const otherAddress = await app.request(
+      "/login",
+      {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin },
+        body: new URLSearchParams({ email, password }),
+      },
+      fromAddress("198.51.100.4"),
+    );
+
+    expect(sameAddress.status).toBe(429);
+    expect(otherAddress.status).toBe(303);
+  });
+
+  it("counts the address added by a trusted proxy, not the one of the proxy", async () => {
+    const proxied = createWebApp({
+      db: getAppDatabase(),
+      timeZone: "Europe/Paris",
+      trustProxy: true,
+    });
+    const viaProxy = (forwardedFor: string, guess: string) =>
+      proxied.request(
+        "/login",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            origin,
+            // A client may send its own header first: the proxy adds the real address last.
+            "x-forwarded-for": `10.0.0.1, ${forwardedFor}`,
+          },
+          body: new URLSearchParams({ email: "someone@team.example", password: guess }),
+        },
+        fromAddress("127.0.0.1"),
+      );
+    for (let index = 0; index < addressLimits.maxAttempts; index += 1) {
+      // oxlint-disable-next-line no-await-in-loop
+      await proxied.request(
+        "/login",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            origin,
+            "x-forwarded-for": "203.0.113.7",
+          },
+          body: new URLSearchParams({ email: `user-${index}@team.example`, password: "guess" }),
+        },
+        fromAddress("127.0.0.1"),
+      );
+    }
+
+    expect((await viaProxy("203.0.113.7", "guess")).status).toBe(429);
+    expect((await viaProxy("198.51.100.4", "guess")).status).toBe(401);
   });
 
   it("refuses a form too large to be a form of the interface, before reading it", async () => {

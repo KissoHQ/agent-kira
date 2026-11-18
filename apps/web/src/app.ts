@@ -64,6 +64,13 @@ const maxEmailLength = 254;
 
 const isNotice = (value: string): value is Notice => Object.hasOwn(notices, value);
 
+const duplicateErrors = {
+  NOT_FOUND: "Demande d'origine introuvable.",
+  SAME_REQUEST: "Une demande ne peut pas être le doublon d'elle-même.",
+  ORIGINAL_IS_DUPLICATE:
+    "Cette demande est elle-même un doublon fermé : indiquez la demande d'origine qu'elle désigne.",
+} as const;
+
 // Files are written by the widget under random UUIDs, so a stored name is never a path.
 const storageRef = z.uuid();
 
@@ -280,16 +287,7 @@ export function createWebApp(options: WebAppOptions) {
     }
     const result = await markDuplicate(db, { contactId: c.get("staff").contactId }, input.data);
     if (!result.ok) {
-      return showRequest(
-        c,
-        {
-          error:
-            result.error === "SAME_REQUEST"
-              ? "Une demande ne peut pas être le doublon d'elle-même."
-              : "Demande d'origine introuvable.",
-        },
-        400,
-      );
+      return showRequest(c, { error: duplicateErrors[result.error] }, 400);
     }
     return done(c, result.value.reference, "duplicate");
   });

@@ -151,6 +151,37 @@ describe("markDuplicate", () => {
     expect(marked?.data).toEqual({ duplicateOf: original });
   });
 
+  it("refuses an original that is itself a closed duplicate, so no loop can form", async () => {
+    const original = await reviewedLater();
+    const repeated = await reviewedLater();
+    await markDuplicate(getAppDatabase(), reviewer, { reference: repeated, duplicateOf: original });
+
+    expect(
+      await markDuplicate(getAppDatabase(), reviewer, {
+        reference: original,
+        duplicateOf: repeated,
+      }),
+    ).toEqual({ ok: false, error: "ORIGINAL_IS_DUPLICATE" });
+    const [first] = await getDatabase().select().from(requests).orderBy(requests.number);
+    expect(first).toMatchObject({ status: "NEW", duplicateOfRequestId: null });
+  });
+
+  it("marks two requests against each other at the same time without blocking", async () => {
+    const first = await reviewedLater();
+    const second = await reviewedLater();
+
+    const results = await Promise.all([
+      markDuplicate(getAppDatabase(), reviewer, { reference: first, duplicateOf: second }),
+      markDuplicate(getAppDatabase(), reviewer, { reference: second, duplicateOf: first }),
+    ]);
+
+    // One wins; the other sees a closed duplicate as its original and is refused.
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)).toEqual([
+      { ok: false, error: "ORIGINAL_IS_DUPLICATE" },
+    ]);
+  });
+
   it("refuses a request marked as its own duplicate", async () => {
     const reference = await reviewedLater();
 

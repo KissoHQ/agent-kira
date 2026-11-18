@@ -247,6 +247,9 @@ export const messages = pgTable(
     handledAt: timestamp("handled_at", { withTimezone: true }),
     // Failed attempts to handle the message, so a message that keeps failing is not retried forever.
     handlingAttempts: integer("handling_attempts").notNull().default(0),
+    // The answer to an inbound message, kept from the moment it is handled until the channel has
+    // sent it, so a channel that is down, or a restart, does not lose it.
+    pendingReply: text("pending_reply"),
   },
   (t) => [
     unique("messages_channel_external_id_key").on(t.channel, t.externalId),
@@ -262,6 +265,10 @@ export const messages = pgTable(
     index("messages_unhandled_idx")
       .on(t.receivedAt)
       .where(sql`${t.direction} = 'INBOUND' and ${t.handledAt} is null`),
+    // Finds the answers still to send, which are few.
+    index("messages_pending_reply_idx")
+      .on(t.receivedAt)
+      .where(sql`${t.pendingReply} is not null`),
   ],
 );
 

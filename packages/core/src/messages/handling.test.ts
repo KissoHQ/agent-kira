@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { useAppTestDatabase, useTestDatabase } from "../../test/database.ts";
 import { type ChannelMessage, storeInboundMessage, storeOutboundMessage } from "./inbox.ts";
-import { listUnhandledMessages, markHandled, recordFailedAttempt } from "./handling.ts";
+import {
+  listPendingReplies,
+  listUnhandledMessages,
+  markHandled,
+  markReplySent,
+  recordFailedAttempt,
+} from "./handling.ts";
 
 useTestDatabase();
 const getAppDatabase = useAppTestDatabase();
@@ -49,5 +55,38 @@ describe("message handling", () => {
     expect(await recordFailedAttempt(getAppDatabase(), stored.messageId)).toBe(2);
     const [unhandled] = await listUnhandledMessages(getAppDatabase(), "EMAIL");
     expect(unhandled?.handlingAttempts).toBe(2);
+  });
+
+  it("keeps the answer of a handled message until the channel has sent it", async () => {
+    const answered = await storeInboundMessage(getAppDatabase(), message("<1@acme.example>"));
+    const silent = await storeInboundMessage(getAppDatabase(), message("<2@acme.example>"));
+
+    await markHandled(getAppDatabase(), answered.messageId, "Votre demande est REQ-0001.");
+    await markHandled(getAppDatabase(), silent.messageId);
+
+    expect(await listPendingReplies(getAppDatabase(), "EMAIL")).toEqual([
+      {
+        messageId: answered.messageId,
+        externalId: "<1@acme.example>",
+        conversationExternalId: "<thread@acme.example>",
+        raw: { id: "<1@acme.example>" },
+        reply: "Votre demande est REQ-0001.",
+      },
+    ]);
+    expect(await listPendingReplies(getAppDatabase(), "SLACK")).toEqual([]);
+
+    await markReplySent(getAppDatabase(), answered.messageId);
+
+    expect(await listPendingReplies(getAppDatabase(), "EMAIL")).toEqual([]);
+  });
+
+  it("never replaces the answer of a message already handled", async () => {
+    const stored = await storeInboundMessage(getAppDatabase(), message("<1@acme.example>"));
+
+    await markHandled(getAppDatabase(), stored.messageId, "Première réponse");
+    await markHandled(getAppDatabase(), stored.messageId, "Seconde réponse");
+
+    const [pending] = await listPendingReplies(getAppDatabase(), "EMAIL");
+    expect(pending?.reply).toBe("Première réponse");
   });
 });

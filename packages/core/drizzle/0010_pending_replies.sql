@@ -1,0 +1,2 @@
+ALTER TABLE "messages" ADD COLUMN "pending_reply" text;--> statement-breakpoint
+CREATE INDEX "messages_pending_reply_idx" ON "messages" USING btree ("received_at") WHERE "messages"."pending_reply" is not null;

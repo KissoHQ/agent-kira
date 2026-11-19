@@ -30,6 +30,7 @@ import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 
+import { registerAdministration } from "./admin.ts";
 import { createCheckQueue } from "./password-checks.ts";
 import {
   type Admission,
@@ -58,10 +59,11 @@ export interface WebAppOptions {
   attachmentsDir?: string;
 }
 
-type Env = {
+export type WebEnv = {
   Bindings: Partial<HttpBindings>;
   Variables: { staff: StaffMember; sessionToken: string };
 };
+type Env = WebEnv;
 
 // Sent as __Host-session: the browser then refuses one set by another site of the same domain, or
 // for a narrower path, so nobody can make a person work in a session they chose.
@@ -158,7 +160,7 @@ export function createWebApp(options: WebAppOptions) {
   const render = (
     c: Context<Env>,
     fragment: Fragment,
-    status: 200 | 400 | 401 | 404 | 409 | 429 | 503 = 200,
+    status: 200 | 400 | 401 | 403 | 404 | 409 | 429 | 503 = 200,
   ) => c.html(fragment, status);
   const refuse = (
     c: Context<Env>,
@@ -416,6 +418,8 @@ export function createWebApp(options: WebAppOptions) {
     }
     return done(c, input.data.reference.toUpperCase(), "status");
   });
+
+  registerAdministration(app, { db, view, render });
 
   app.notFound((c) => c.text("Not found", 404));
   app.onError((error, c) => {

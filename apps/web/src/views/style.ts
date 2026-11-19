@@ -193,6 +193,16 @@ button.primary { color: #ffffff; background: var(--primary); border-color: var(-
 button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 button:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(124, 93, 250, 0.4); }
 
+/* Administration: the links between its pages, and the small forms of one action. */
+.subnav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.subnav a { padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 8px; }
+.subnav a[aria-current] { color: var(--text-primary); background: var(--bg-surface); }
+form.inline { display: inline; }
+main > .card { margin-top: 16px; max-width: 640px; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; padding: 0; border: 0; }
+.checks legend { margin-bottom: 6px; font-size: 12px; color: var(--text-secondary); }
+.checks label { flex-direction: row; align-items: center; gap: 6px; color: var(--text-primary); }
+
 /* Filters: a dark card above the table. */
 .filters {
   display: flex;

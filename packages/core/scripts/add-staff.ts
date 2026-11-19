@@ -1,7 +1,9 @@
-// Creates the web interface account of a team member, or sets a new password. The password is read
-// from the terminal without being shown, or from standard input, never from the command line,
-// which would keep it in the shell history.
-// Usage: pnpm staff:add --email dana@team.example --name "Dana Support"
+// Creates the web interface account of a team member, or sets a new password, which ends their
+// open sessions. The password is read from the terminal without being shown, or from standard
+// input, never from the command line, which would keep it in the shell history. A new account is a
+// member unless --role admin is given; the first administrator is created this way, and manages
+// the other accounts from the web interface.
+// Usage: pnpm staff:add --email dana@team.example --name "Dana Support" [--role admin|member]
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
 
@@ -67,7 +69,7 @@ async function readPassword(): Promise<string> {
 }
 
 const { values } = parseArgs({
-  options: { email: { type: "string" }, name: { type: "string" } },
+  options: { email: { type: "string" }, name: { type: "string" }, role: { type: "string" } },
 });
 let password: string;
 try {
@@ -76,7 +78,12 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
-const input = staffAccountInput.safeParse({ ...values, password });
+const input = staffAccountInput.safeParse({
+  email: values.email,
+  name: values.name,
+  role: values.role?.toUpperCase(),
+  password,
+});
 if (!input.success) {
   console.error(`Invalid account:\n${z.prettifyError(input.error)}`);
   process.exit(1);

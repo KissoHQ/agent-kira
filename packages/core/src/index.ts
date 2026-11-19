@@ -146,13 +146,28 @@ export {
 } from "./requests/console.ts";
 export {
   authenticateStaff,
+  changeOwnPassword,
+  listStaff,
   minPasswordLength,
+  passwordInput,
   saveStaffAccount,
+  setStaffDisabled,
+  setStaffPassword,
+  setStaffRole,
   staffAccountInput,
   type StaffAccountInput,
   type StaffMember,
+  type StaffRole,
+  type StaffRow,
 } from "./staff/accounts.ts";
-export { closeSession, findSession, openSession, sessionDurationMs } from "./staff/sessions.ts";
+export {
+  closeSession,
+  closeSessionsOf,
+  findSession,
+  openSession,
+  sessionDurationMs,
+  sessionIdleMs,
+} from "./staff/sessions.ts";
 export { worksOnProjectByEmail } from "./contacts/membership.ts";
 export { type Admission, createRateLimiter, type RateLimit } from "./limits/rate-limiter.ts";
 export {

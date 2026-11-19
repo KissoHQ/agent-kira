@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useAppTestDatabase, useTestDatabase } from "../../test/database.ts";
 import { staffAccounts, staffSessions } from "../db/schema.ts";
 import { saveStaffAccount } from "./accounts.ts";
-import { closeSession, findSession, openSession, sessionDurationMs } from "./sessions.ts";
+import {
+  closeSession,
+  findSession,
+  openSession,
+  sessionDurationMs,
+  sessionIdleMs,
+} from "./sessions.ts";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useAppTestDatabase();
@@ -41,18 +47,39 @@ describe("findSession", () => {
       contactId,
       name: "Dana Support",
       email: "dana.support@team.example",
+      role: "MEMBER",
     });
     await expect(findSession(getAppDatabase(), `${token}x`)).resolves.toBe(undefined);
   });
 
-  it("ends the session after its duration", async () => {
+  it("ends the session after its duration, even when it is used all along", async () => {
+    const opened = new Date("2026-10-29T08:00:00Z");
+    const { token } = await openSession(getAppDatabase(), contactId, opened);
+    const at = (ms: number) => new Date(opened.getTime() + ms);
+
+    // Used every half hour of the working day, one request after the other.
+    for (let elapsed = 30 * 60 * 1000; elapsed < sessionDurationMs; elapsed += 30 * 60 * 1000) {
+      // oxlint-disable-next-line no-await-in-loop
+      await expect(findSession(getAppDatabase(), token, at(elapsed))).resolves.toBeDefined();
+    }
+    await expect(
+      findSession(getAppDatabase(), token, at(sessionDurationMs - 1)),
+    ).resolves.toBeDefined();
+    await expect(findSession(getAppDatabase(), token, at(sessionDurationMs))).resolves.toBe(
+      undefined,
+    );
+  });
+
+  it("ends a session left without use for too long", async () => {
     const opened = new Date("2026-10-29T08:00:00Z");
     const { token } = await openSession(getAppDatabase(), contactId, opened);
 
-    const justBefore = new Date(opened.getTime() + sessionDurationMs - 1);
-    await expect(findSession(getAppDatabase(), token, justBefore)).resolves.toBeDefined();
-    const atTheEnd = new Date(opened.getTime() + sessionDurationMs);
-    await expect(findSession(getAppDatabase(), token, atTheEnd)).resolves.toBe(undefined);
+    await expect(
+      findSession(getAppDatabase(), token, new Date(opened.getTime() + sessionIdleMs - 1)),
+    ).resolves.toBeDefined();
+    await expect(
+      findSession(getAppDatabase(), token, new Date(opened.getTime() + 2 * sessionIdleMs)),
+    ).resolves.toBeUndefined();
   });
 
   it("ends the sessions of a disabled account", async () => {

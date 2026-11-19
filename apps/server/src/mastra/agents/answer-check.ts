@@ -148,12 +148,16 @@ export function answerProblems(text: string, context: AnswerContext): string[] {
 
 // Emails and Slack threads show the answer as plain text, so Markdown marks are removed.
 export function toPlainText(text: string): string {
-  return text
-    .replaceAll(/\*\*(.+?)\*\*/g, "$1")
-    .replaceAll(/__(.+?)__/g, "$1")
-    .replaceAll(/`([^`]+)`/g, "$1")
-    .replaceAll(/^#{1,6}\s+/gm, "")
-    .trim();
+  return (
+    text
+      // Marks of the text of other people in the results of the tools, which the model may copy.
+      .replaceAll(/<\/?sender_text>/gi, "")
+      .replaceAll(/\*\*(.+?)\*\*/g, "$1")
+      .replaceAll(/__(.+?)__/g, "$1")
+      .replaceAll(/`([^`]+)`/g, "$1")
+      .replaceAll(/^#{1,6}\s+/gm, "")
+      .trim()
+  );
 }
 
 // Checks each final answer of the model, before it ends the run. A rejected answer is sent back to

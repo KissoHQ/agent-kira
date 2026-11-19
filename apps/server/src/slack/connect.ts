@@ -11,6 +11,13 @@ export interface SlackConnection {
   start: () => Promise<void>;
 }
 
+// Slack reads <, > and & as the start of a mention, a link or an entity: the answer is escaped, as
+// Slack documents, so a text written by the model cannot notify a whole channel with <!channel> or
+// hide a link behind a label.
+export function escapeForSlack(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
 // Opens the Socket Mode connection: the server connects to Slack, so no public address is needed.
 // Events arrive on a connection authenticated by the app token, so their sender is the Slack user.
 export async function connectSlack(tokens: {
@@ -33,9 +40,10 @@ export async function connectSlack(tokens: {
     },
     web: {
       postInThread: async ({ channel, threadTs, text }) => {
+        const message = { channel, thread_ts: threadTs, text: escapeForSlack(text) };
         // This is the Slack Web API method, not the browser's window.postMessage the rule is about.
         // oxlint-disable-next-line unicorn/require-post-message-target-origin
-        const posted = await client.chat.postMessage({ channel, thread_ts: threadTs, text });
+        const posted = await client.chat.postMessage(message);
         if (posted.ts === undefined) {
           throw new Error("Slack did not return the timestamp of the posted message");
         }

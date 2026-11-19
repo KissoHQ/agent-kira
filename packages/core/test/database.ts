@@ -9,6 +9,7 @@ declare module "vitest" {
   export interface ProvidedContext {
     testDatabaseUrl: string;
     testAppDatabaseUrl: string;
+    testServerDatabaseUrl: string;
   }
 }
 
@@ -63,6 +64,27 @@ export function useAppTestDatabase(): () => Database {
 
   beforeAll(() => {
     connection = connectDatabase(inject("testAppDatabaseUrl"));
+  });
+
+  afterAll(async () => {
+    await connection?.close();
+  });
+
+  return () => {
+    if (connection === undefined) {
+      throw new Error("The test database is only available inside tests");
+    }
+    return connection.db;
+  };
+}
+
+// Connects to the same test database with the role of the agent server, which has fewer rights:
+// the code of the server runs under it in its tests, so a right it lacks fails there first.
+export function useServerTestDatabase(): () => Database {
+  let connection: DatabaseConnection | undefined;
+
+  beforeAll(() => {
+    connection = connectDatabase(inject("testServerDatabaseUrl"));
   });
 
   afterAll(async () => {

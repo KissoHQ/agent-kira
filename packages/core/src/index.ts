@@ -21,6 +21,7 @@ export {
 export { requestPriorityDefinitions, requestTypeDefinitions } from "./classification/taxonomy.ts";
 export {
   loadAppDatabaseEnv,
+  loadServerDatabaseEnv,
   loadClassifierEnv,
   loadDatabaseEnv,
   loadKnowledgeEnv,

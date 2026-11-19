@@ -2,11 +2,12 @@ import { html } from "hono/html";
 
 import { type Fragment, page } from "./layout.ts";
 
-export function signInPage(error?: string, email = ""): Fragment {
+export function signInPage(error?: string, email = "", next = "/"): Fragment {
   return page(
     "Connexion",
     html`<form class="sign-in" method="post" action="/login">
       <h1>Demandes · connexion</h1>
+      <input type="hidden" name="next" value="${next}" />
       ${error === undefined ? "" : html`<p class="error" role="alert">${error}</p>`}
       <label>
         E-mail

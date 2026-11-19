@@ -65,14 +65,19 @@ export const eventType = pgEnum("event_type", [
   "MARKED_DUPLICATE",
 ]);
 export const actorType = pgEnum("actor_type", ["AGENT", "HUMAN", "SYSTEM"]);
+// An administrator manages the clients, projects, contacts, channels and accounts; a member handles
+// the requests.
+export const staffRole = pgEnum("staff_role", ["ADMIN", "MEMBER"]);
 
 export const organizations = pgTable(
   "organizations",
   {
     id: id(),
     name: text("name").notNull(),
-    // Domain of the organization's email addresses, used to recognize a sender's organization.
+    // Domain of the organization's email addresses, shown to the team.
     emailDomain: text("email_domain").unique(),
+    // A client that left: its projects are archived and its contacts disabled with it.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -92,6 +97,8 @@ export const contacts = pgTable(
     email: text("email").unique(),
     slackUserId: text("slack_user_id").unique(),
     role: text("role"),
+    // A disabled contact, such as a person who left the client, is treated as an unknown sender.
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -113,6 +120,8 @@ export const projects = pgTable(
     organizationId: uuid("organization_id").references(() => organizations.id, {
       onDelete: "set null",
     }),
+    // A finished project: no message is filed under it any more, and its requests stay for the team.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -324,6 +333,7 @@ export const staffAccounts = pgTable("staff_accounts", {
     .references(() => contacts.id),
   // Argon2id hash with its parameters and salt, never the password itself.
   passwordHash: text("password_hash").notNull(),
+  role: staffRole("role").notNull().default("MEMBER"),
   // A disabled account can no longer sign in, and its sessions stop working.
   disabledAt: timestamp("disabled_at", { withTimezone: true }),
   createdAt: createdAt(),
@@ -343,6 +353,8 @@ export const staffSessions = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     // Set when the person signs out: the application role cannot delete rows.
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    // Last request of the session, so a session left alone ends before its absolute expiry.
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: createdAt(),
   },
   (t) => [index("staff_sessions_contact_id_idx").on(t.contactId)],

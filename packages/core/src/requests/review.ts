@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database, Transaction } from "../db/client.ts";
@@ -37,6 +37,9 @@ export const reviewRequestInput = z.object({
       status: z.enum(requests.status.enumValues).optional(),
     })
     .default({}),
+  // The time of the last change the person saw. When the request changed since, such as a message
+  // the agent added, the review is refused, so the person never overwrites what they did not see.
+  version: z.iso.datetime().optional(),
 });
 
 export const markDuplicateInput = z.object({ reference, duplicateOf: reference });
@@ -71,44 +74,85 @@ async function view(tx: Database | Transaction, requestId: string): Promise<Requ
   return toRequestView(row);
 }
 
-// Requests waiting for a person, oldest first, with the reasons of the review.
-export async function listReviewQueue(db: Database, limit = 50): Promise<ReviewItem[]> {
-  const rows = await selectRequestViews(db, eq(requests.needsReview, true))
-    .orderBy(asc(requests.createdAt))
-    .limit(limit);
-  return Promise.all(
-    rows.map(async (row) => ({
-      request: toRequestView(row),
-      reasons: await reviewReasonsOf(db, row.id),
-    })),
+// Requests shown on one page of the review queue.
+export const reviewPageSize = 50;
+
+export interface ReviewQueuePage {
+  items: ReviewItem[];
+  // Every request waiting for a person, on all pages.
+  total: number;
+  page: number;
+}
+
+// Requests waiting for a person, oldest first, a page at a time, with the reasons of the review.
+export async function listReviewQueue(db: Database, page = 1): Promise<ReviewQueuePage> {
+  const waiting = eq(requests.needsReview, true);
+  const [rows, [counted]] = await Promise.all([
+    selectRequestViews(db, waiting)
+      .orderBy(asc(requests.createdAt), asc(requests.number))
+      .limit(reviewPageSize)
+      .offset((page - 1) * reviewPageSize),
+    db.select({ value: count() }).from(requests).where(waiting),
+  ]);
+  const reasons = await reviewReasonsFor(
+    db,
+    rows.map((row) => row.id),
+  );
+  return {
+    items: rows.map((row) => ({ request: toRequestView(row), reasons: reasons.get(row.id) ?? [] })),
+    total: counted?.value ?? 0,
+    page,
+  };
+}
+
+const classifiedData = z
+  .object({ reviewReasons: z.array(z.string()).default([]) })
+  .catch({ reviewReasons: [] });
+
+// Why each request was sent to a person: the reasons recorded by its latest classification, and a
+// question the agent passed to the team since the last review. Two queries for all the requests.
+async function reviewReasonsFor(
+  db: Database,
+  requestIds: string[],
+): Promise<Map<string, string[]>> {
+  if (requestIds.length === 0) {
+    return new Map();
+  }
+  const [classified, latest] = await Promise.all([
+    db
+      .selectDistinctOn([events.requestId], { requestId: events.requestId, data: events.data })
+      .from(events)
+      .where(and(inArray(events.requestId, requestIds), eq(events.type, "CLASSIFIED")))
+      .orderBy(events.requestId, desc(events.createdAt), desc(events.id)),
+    db
+      .selectDistinctOn([events.requestId], { requestId: events.requestId, type: events.type })
+      .from(events)
+      .where(
+        and(
+          inArray(events.requestId, requestIds),
+          inArray(events.type, ["REVIEW_REQUESTED", "REVIEWED"]),
+        ),
+      )
+      .orderBy(events.requestId, desc(events.createdAt), desc(events.id)),
+  ]);
+  return new Map(
+    requestIds.map((id) => {
+      const reasons = classifiedData.parse(
+        classified.find((row) => row.requestId === id)?.data ?? {},
+      ).reviewReasons;
+      const forwarded = latest.find((row) => row.requestId === id)?.type === "REVIEW_REQUESTED";
+      return [
+        id,
+        forwarded && !reasons.includes("QUESTION_FOR_TEAM")
+          ? [...reasons, "QUESTION_FOR_TEAM"]
+          : reasons,
+      ];
+    }),
   );
 }
 
-// Why the request was sent to a person: the reasons recorded by its latest classification, and a
-// question the agent passed to the team since the last review.
 export async function reviewReasonsOf(db: Database, requestId: string): Promise<string[]> {
-  const [classified] = await db
-    .select({ data: events.data })
-    .from(events)
-    .where(and(eq(events.requestId, requestId), eq(events.type, "CLASSIFIED")))
-    .orderBy(desc(events.createdAt))
-    .limit(1);
-  const reasons = z
-    .object({ reviewReasons: z.array(z.string()).default([]) })
-    .catch({ reviewReasons: [] })
-    .parse(classified?.data ?? {}).reviewReasons;
-  const [latest] = await db
-    .select({ type: events.type })
-    .from(events)
-    .where(
-      and(eq(events.requestId, requestId), inArray(events.type, ["REVIEW_REQUESTED", "REVIEWED"])),
-    )
-    .orderBy(desc(events.createdAt), desc(events.id))
-    .limit(1);
-  const forwarded = latest?.type === "REVIEW_REQUESTED";
-  return forwarded && !reasons.includes("QUESTION_FOR_TEAM")
-    ? [...reasons, "QUESTION_FOR_TEAM"]
-    : reasons;
+  return (await reviewReasonsFor(db, [requestId])).get(requestId) ?? [];
 }
 
 // A person checked the request: it leaves the queue, with the corrections they made, recorded in
@@ -117,11 +161,14 @@ export function reviewRequest(
   db: Database,
   reviewer: Reviewer,
   input: ReviewRequestInput,
-): Promise<Result<RequestView, "NOT_FOUND" | "PROJECT_NOT_FOUND">> {
+): Promise<Result<RequestView, "NOT_FOUND" | "PROJECT_NOT_FOUND" | "CHANGED">> {
   return db.transaction(async (tx) => {
     const request = await lockRequest(tx, input.reference);
     if (request === undefined) {
       return fail("NOT_FOUND");
+    }
+    if (input.version !== undefined && request.updatedAt.getTime() !== Date.parse(input.version)) {
+      return fail("CHANGED");
     }
     const values: Partial<RequestRow> = { needsReview: false };
     const changes: Record<string, { from: unknown; to: unknown }> = {};

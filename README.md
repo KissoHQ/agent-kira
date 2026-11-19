@@ -172,11 +172,13 @@ pnpm start
 
 The team consults the requests and validates the decisions of the agent in a web interface, started separately from the agent server. It needs the database only.
 
-1. Create an account for each member of the team. The command asks for the password twice, without showing it, and requires at least 15 characters. Running it again for the same email sets a new password:
+1. Create the first administrator. The command asks for the password twice, without showing it, and requires at least 15 characters. Running it again for the same email sets a new password and ends the open sessions:
 
    ```bash
-   pnpm staff:add --email dana.support@team.example --name "Dana Support"
+   pnpm staff:add --email dana.support@team.example --name "Dana Support" --role admin
    ```
+
+   The administrator then creates the other accounts in the interface, under Administration → Équipe.
 
 2. Start the interface:
 
@@ -188,7 +190,16 @@ The team consults the requests and validates the decisions of the agent in a web
 
 3. Open `http://127.0.0.1:4112` in Chrome or Firefox and sign in. Safari refuses the session cookie over plain HTTP, even on this machine.
 
-The interface lists the requests with a search and filters, shows the review queue with the reasons of each review, and shows each request with its messages, the answers of the agent and its full history. A request can be validated with corrections, changed to another status or marked as a duplicate: the history records the person who did it. The choices and protections of the interface are described in [decision 008](docs/decisions/008-web-interface.md).
+The interface lists the requests with a search and filters, shows the review queue with the reasons of each review, and shows each request with its messages, the answers of the agent and its full history. A request can be validated with corrections, changed to another status or marked as a duplicate: the history records the person who did it. When the request changed while the page was open, such as a new message, the action is refused and the page shows the request as it is now.
+
+Two roles share the interface:
+
+| Role          | Can                                                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Member        | Handle the requests, and change their own password under "Mon compte"                                                                                                |
+| Administrator | Also manage, under "Administration": the clients, their projects, the contacts and their projects, the channels dedicated to a project, and the accounts of the team |
+
+Nothing is deleted: a client or a project that ends is archived, a contact or an account is disabled, so the history of the requests stays whole. A session ends after 8 hours, or after 1 hour without use. The choices and protections of the interface are described in [decision 008](docs/decisions/008-web-interface.md).
 
 ## Knowledge base
 

@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { useAppTestDatabase, useTestDatabase } from "../../test/database.ts";
-import { events, organizations, requests } from "./schema.ts";
+import { events, organizations, projectChannels, projectContacts, requests } from "./schema.ts";
 
 useTestDatabase();
 const getAppDatabase = useAppTestDatabase();
@@ -43,6 +43,11 @@ describe("application role", () => {
 
     await expect(getAppDatabase().delete(requests)).rejects.toMatchObject(permissionDenied);
     await expect(getAppDatabase().delete(organizations)).rejects.toMatchObject(permissionDenied);
+  });
+
+  it("can remove who works on a project and which channel leads to it, which are settings", async () => {
+    await expect(getAppDatabase().delete(projectContacts)).resolves.toBeDefined();
+    await expect(getAppDatabase().delete(projectChannels)).resolves.toBeDefined();
   });
 
   it("cannot rewrite the history", async () => {

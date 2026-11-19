@@ -43,6 +43,8 @@ export type ListRequestsInput = z.input<typeof listRequestsInput>;
 export const changeStatusInput = z.object({
   reference: z.string().regex(/^REQ-\d{1,9}$/i),
   status: z.enum(requestStatus.enumValues),
+  // The time of the last change the person saw: a request changed since is not overwritten.
+  version: z.iso.datetime().optional(),
 });
 
 export type ChangeStatusInput = z.infer<typeof changeStatusInput>;
@@ -385,19 +387,22 @@ export function changeRequestStatus(
   db: Database,
   reviewer: Reviewer,
   input: ChangeStatusInput,
-): Promise<Result<RequestRow["status"], "NOT_FOUND">> {
+): Promise<Result<RequestRow["status"], "NOT_FOUND" | "CHANGED">> {
   return db.transaction(async (tx) => {
     const requestNumber = parseReference(input.reference);
     const [request] =
       requestNumber === undefined
         ? []
         : await tx
-            .select({ id: requests.id, status: requests.status })
+            .select({ id: requests.id, status: requests.status, updatedAt: requests.updatedAt })
             .from(requests)
             .where(eq(requests.number, requestNumber))
             .for("update");
     if (request === undefined) {
       return fail("NOT_FOUND");
+    }
+    if (input.version !== undefined && request.updatedAt.getTime() !== Date.parse(input.version)) {
+      return fail("CHANGED");
     }
     if (request.status !== input.status) {
       await tx.update(requests).set({ status: input.status }).where(eq(requests.id, request.id));

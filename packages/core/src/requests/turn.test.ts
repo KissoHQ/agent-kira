@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { alice, bruno, chloeSlackId, storeMessage } from "../../test/fixtures.ts";
 import { useAppTestDatabase, useTestDatabase } from "../../test/database.ts";
-import { messages } from "../db/schema.ts";
+import { contacts, messages, projects } from "../db/schema.ts";
 import { seedDatabase } from "../db/seed.ts";
 import { describeContact, describeProject } from "./queries.ts";
 import { prepareTurn, type Trust } from "./turn.ts";
@@ -55,6 +55,32 @@ describe("prepareTurn: who the agent acts for", () => {
 
     expect(turn.actor).toEqual({ kind: "anonymous" });
     expect(await describeContact(getAppDatabase(), turn)).toEqual({ status: "unverified" });
+  });
+
+  it("gives no rights to a contact who was disabled, such as a person who left the client", async () => {
+    await getDatabase()
+      .update(contacts)
+      .set({ disabledAt: new Date() })
+      .where(eq(contacts.email, alice));
+
+    const turn = await turnFor({ sender: alice, bodyText: "Bonjour" });
+
+    expect(turn.actor).toEqual({ kind: "anonymous" });
+  });
+
+  it("leaves out the archived projects of a contact", async () => {
+    await getDatabase()
+      .update(projects)
+      .set({ archivedAt: new Date() })
+      .where(eq(projects.key, "CRM"));
+
+    const turn = await turnFor({ sender: alice, bodyText: "Le panier se vide." });
+
+    expect(await describeProject(getAppDatabase(), turn)).toMatchObject({
+      status: "identified",
+      project: { key: "SHOP" },
+      source: "CONTACT",
+    });
   });
 
   it("gives no rights to a verified but unknown sender", async () => {
@@ -130,6 +156,21 @@ describe("prepareTurn: which project the message is about", () => {
       project: { key: "SHOP" },
       source: "CHANNEL",
     });
+  });
+
+  it("ignores the channel of an archived project", async () => {
+    await getDatabase()
+      .update(projects)
+      .set({ archivedAt: new Date() })
+      .where(eq(projects.key, "SHOP"));
+
+    const turn = await turnFor(
+      { channel: "SLACK", sender: chloeSlackId, bodyText: "Problème" },
+      "VERIFIED",
+      "C000000SHOP",
+    );
+
+    expect((await describeProject(getAppDatabase(), turn)).status).not.toBe("identified");
   });
 
   it("identifies the project of an unverified sender only from a dedicated channel", async () => {

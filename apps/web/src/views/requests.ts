@@ -3,8 +3,9 @@ import {
   type ConsoleRequest,
   consolePageSize,
   type listRequestsInput,
-  type ReviewItem,
+  type ReviewQueuePage,
   requestStatus,
+  reviewPageSize,
   requestType,
 } from "@request-agent/core";
 import { html } from "hono/html";
@@ -166,13 +167,15 @@ export function requestListPage(
   );
 }
 
-export function reviewQueuePage(view: ViewContext, queue: ReviewItem[]): Fragment {
+export function reviewQueuePage(view: ViewContext, queuePage: ReviewQueuePage): Fragment {
+  const queue = queuePage.items;
+  const pages = Math.max(Math.ceil(queuePage.total / reviewPageSize), 1);
   return page(
     "À revoir",
     html`<h1>À revoir</h1>
       <p class="muted">
-        Demandes dont l'agent n'est pas sûr, les plus anciennes d'abord. Ouvrez-en une pour la
-        valider ou la corriger.
+        ${queuePage.total} demande${queuePage.total > 1 ? "s" : ""} dont l'agent n'est pas sûr, les
+        plus anciennes d'abord. Ouvrez-en une pour la valider ou la corriger.
       </p>
       ${
         queue.length === 0
@@ -204,6 +207,15 @@ export function reviewQueuePage(view: ViewContext, queue: ReviewItem[]): Fragmen
                 </tbody>
               </table>
             </div>`
+      }
+      ${
+        pages > 1
+          ? html`<nav class="pages" aria-label="Pages">
+              ${queuePage.page > 1 ? html`<a href="/review?page=${queuePage.page - 1}">Précédente</a>` : ""}
+              <span class="muted">Page ${queuePage.page} sur ${pages}</span>
+              ${queuePage.page < pages ? html`<a href="/review?page=${queuePage.page + 1}">Suivante</a>` : ""}
+            </nav>`
+          : ""
       }`,
     view.staff,
     "review",

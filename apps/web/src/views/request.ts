@@ -146,6 +146,7 @@ function reviewForm(record: RequestRecord, projects: { key: string; name: string
     projects.map((project) => [project.key, `${project.key} · ${project.name}`]),
   );
   return html`<form method="post" action="/requests/${record.reference}/review">
+    <input type="hidden" name="version" value="${record.updatedAt}" />
     <label>
       Type
       <select name="type">
@@ -199,6 +200,7 @@ function actions(record: RequestRecord, projects: { key: string; name: string }[
     <section class="card">
       <h2>Changer le statut</h2>
       <form method="post" action="/requests/${record.reference}/status">
+        <input type="hidden" name="version" value="${record.updatedAt}" />
         <label>
           Statut
           <select name="status">

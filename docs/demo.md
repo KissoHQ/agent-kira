@@ -17,10 +17,10 @@ pnpm db:up
 pnpm db:migrate
 pnpm db:seed
 pnpm kb:import --demo
-pnpm staff:add --email dana.support@team.example --name "Dana Support"
+pnpm staff:add --email dana.support@team.example --name "Dana Support" --role admin
 ```
 
-The demo data holds three projects and three contacts, described in [the data model](data-model.md#demo-data). Bruno Leroy works on the PORTAL project only. Alice Martin works on SHOP and CRM, so the project of her messages is ambiguous. `pnpm kb:import --demo` loads 10 fictitious help articles of the three projects, with Ollama running. The last command creates the account of a fictitious team member for the web interface, and asks for a password of at least 15 characters.
+The demo data holds three projects and three contacts, described in [the data model](data-model.md#demo-data). Bruno Leroy works on the PORTAL project only. Alice Martin works on SHOP and CRM, so the project of her messages is ambiguous. `pnpm kb:import --demo` loads 10 fictitious help articles of the three projects, with Ollama running. The last command creates the account of a fictitious team member, administrator of the web interface, and asks for a password of at least 15 characters.
 
 ## 2. Start the services
 

@@ -67,6 +67,7 @@ const embedder = createOllamaEmbedder({
   baseUrl: env.OLLAMA_BASE_URL,
   model: env.OLLAMA_EMBEDDING_MODEL,
   timeoutMs: embeddingTimeoutMs,
+  apiKey: env.OLLAMA_API_KEY,
 });
 const { db, close } = connectDatabase(loadAppDatabaseEnv().APP_DATABASE_URL);
 try {

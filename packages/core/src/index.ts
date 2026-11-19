@@ -23,6 +23,8 @@ export {
   loadAppDatabaseEnv,
   loadServerDatabaseEnv,
   loadClassifierEnv,
+  ollamaApiKey,
+  ollamaBaseUrl,
   loadDatabaseEnv,
   loadKnowledgeEnv,
   type AppDatabaseEnv,

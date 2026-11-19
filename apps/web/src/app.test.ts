@@ -116,12 +116,36 @@ async function record(reference: string) {
 }
 
 describe("sign-in", () => {
-  it("sends a visitor without a session to the sign-in page", async () => {
-    const response = await app.request("/");
+  it("sends a visitor without a session to the sign-in page, and back to the page after", async () => {
+    const home = await app.request("/");
+    const asked = await app.request("/review?page=2");
+    const form = await post("/requests/REQ-0001/status", { status: "CLOSED" });
 
-    expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe("/login");
-    expect((await post("/requests/REQ-0001/status", { status: "CLOSED" })).status).toBe(401);
+    expect(home.status).toBe(303);
+    expect(home.headers.get("location")).toBe("/login");
+    expect(asked.headers.get("location")).toBe("/login?next=%2Freview%3Fpage%3D2");
+    expect(form.status).toBe(303);
+    expect(form.headers.get("location")).toBe("/login");
+    const signedIn = await post("/login", { email, password, next: "/review?page=2" });
+    expect(signedIn.headers.get("location")).toBe("/review?page=2");
+  });
+
+  it("never sends a person to another site after signing in", async () => {
+    const responses = await Promise.all(
+      ["https://evil.example", "//evil.example", "/\\evil.example"].map(async (next) =>
+        post("/login", { email, password, next }),
+      ),
+    );
+
+    expect(responses.map((response) => response.headers.get("location"))).toEqual(["/", "/", "/"]);
+  });
+
+  it("ends the session the browser held when the person signs in again", async () => {
+    const first = await signIn();
+
+    await post("/login", { email, password }, { cookie: first });
+
+    expect((await app.request("/", { headers: { cookie: first } })).status).toBe(303);
   });
 
   it("opens a session in a protected cookie with the right password", async () => {
@@ -129,7 +153,9 @@ describe("sign-in", () => {
 
     expect(response.status).toBe(303);
     const cookie = response.headers.get("set-cookie") ?? "";
-    expect(cookie).toMatch(/^session=[\w-]{43};/);
+    expect(cookie).toMatch(/^__Host-session=[\w-]{43};/);
+    expect(cookie).toContain("Path=/");
+    expect(cookie).not.toContain("Domain");
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("Secure");
     expect(cookie).toContain("SameSite=Lax");
@@ -287,7 +313,7 @@ describe("sign-in", () => {
     const response = await post("/logout", {}, { cookie });
 
     expect(response.status).toBe(303);
-    expect(response.headers.get("set-cookie")).toMatch(/^session=;/);
+    expect(response.headers.get("set-cookie")).toMatch(/^__Host-session=;/);
     expect((await app.request("/", { headers: { cookie } })).status).toBe(303);
   });
 });
@@ -624,6 +650,24 @@ describe("attachments", () => {
     await writeFile(join(folder, storageRef), "PNG!");
     return { reference, folder, stored: stored?.id ?? "", described: described?.id ?? "" };
   }
+
+  it("reports a folder it cannot read as an error, not as a missing file", async () => {
+    const files = await requestWithFiles();
+    const errors: Error[] = [];
+    // A file where the folder should be: reading inside it fails with ENOTDIR.
+    app = createWebApp({
+      db: getAppDatabase(),
+      timeZone: "Europe/Paris",
+      attachmentsDir: join(files.folder, storageRef),
+      onError: (error) => errors.push(error),
+    });
+    const cookie = await signIn();
+
+    const response = await app.request(`/attachments/${files.stored}`, { headers: { cookie } });
+
+    expect(response.status).toBe(500);
+    expect(errors).toHaveLength(1);
+  });
 
   it("lets the team download a stored file, and links it from the request", async () => {
     const files = await requestWithFiles();

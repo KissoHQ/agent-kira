@@ -12,7 +12,7 @@ import {
   seedDatabase,
   storeMessage,
   testReviewThreshold,
-  useAppTestDatabase,
+  useServerTestDatabase,
   useTestDatabase,
 } from "@request-agent/core/testing";
 import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
@@ -24,7 +24,7 @@ import { handleMessage, maxAgentSteps } from "./handle-message";
 import { createRequestAgent } from "./request-agent";
 
 const getDatabase = useTestDatabase();
-const getAppDatabase = useAppTestDatabase();
+const getAppDatabase = useServerTestDatabase();
 
 beforeEach(async () => {
   await seedDatabase(getDatabase());

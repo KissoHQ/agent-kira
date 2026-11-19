@@ -20,6 +20,8 @@
     "db:seed": "pnpm --filter @request-agent/core db:seed",
     "staff:add": "pnpm --filter @request-agent/core staff:add",
     "contact:add": "pnpm --filter @request-agent/core contact:add",
+    "contact:erase": "pnpm --filter @request-agent/core contact:erase",
+    "db:purge": "pnpm --filter @request-agent/core db:purge",
     "kb:import": "pnpm --filter @request-agent/core kb:import",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r --workspace-concurrency=1 test",

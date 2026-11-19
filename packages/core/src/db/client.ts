@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
@@ -49,4 +50,14 @@ export function connectDatabase(
     db: drizzle({ client: pool, schema }),
     close: () => pool.end(),
   };
+}
+
+// Whether the database answers, for the readiness checks of the servers.
+export async function pingDatabase(db: Database): Promise<boolean> {
+  try {
+    await db.execute(sql`select 1`);
+    return true;
+  } catch {
+    return false;
+  }
 }

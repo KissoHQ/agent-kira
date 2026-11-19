@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, inject, it } from "vitest";
 
 import { useTestDatabase } from "../../test/database.ts";
-import { connectDatabase, type DatabaseConnection } from "./client.ts";
+import { connectDatabase, type DatabaseConnection, pingDatabase } from "./client.ts";
 
 const getDatabase = useTestDatabase();
 
@@ -63,5 +63,16 @@ describe("connectDatabase", () => {
         current_setting('idle_in_transaction_session_timeout') as idle`,
     );
     expect(result.rows[0]).toEqual({ statement: "30s", idle: "1min" });
+  });
+
+  it("tells whether the database answers", async () => {
+    connection = connectDatabase(inject("testAppDatabaseUrl"));
+    const down = connectDatabase("postgresql://nobody:none@127.0.0.1:1/none", {
+      onError: () => undefined,
+    });
+
+    expect(await pingDatabase(connection.db)).toBe(true);
+    expect(await pingDatabase(down.db)).toBe(false);
+    await down.close();
   });
 });

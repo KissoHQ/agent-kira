@@ -121,6 +121,8 @@ export {
 export { assessDuplicate, findDuplicateCandidates } from "./requests/duplicates.ts";
 export {
   listReviewQueue,
+  reviewPageSize,
+  type ReviewQueuePage,
   markDuplicate,
   markDuplicateInput,
   reviewRequest,

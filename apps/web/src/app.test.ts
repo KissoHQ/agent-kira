@@ -11,6 +11,7 @@ import {
   getRequestRecord,
   messages,
   prepareTurn,
+  requests,
   saveStaffAccount,
   unclassifiedTurn,
 } from "@request-agent/core";
@@ -469,6 +470,28 @@ describe("actions", () => {
       await app.request(response.headers.get("location") ?? "", { headers: { cookie } })
     ).text();
     expect(page).toContain("Demande validée.");
+  });
+
+  it("refuses a review of a request that changed since the page was opened, and shows it again", async () => {
+    const cookie = await signIn();
+    const reference = await requestToReview();
+    const page = await (
+      await app.request(`/requests/${reference}`, { headers: { cookie } })
+    ).text();
+    const version = /name="version" value="([^"]+)"/.exec(page)?.[1] ?? "";
+    // Meanwhile, the agent adds a message to the request.
+    await getDatabase().update(requests).set({ summary: "Un nouveau message est arrivé" });
+
+    const response = await post(
+      `/requests/${reference}/review`,
+      { type: "BUG", status: "CLOSED", version },
+      { cookie },
+    );
+
+    expect(version).not.toBe("");
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("La demande a changé pendant que vous la consultiez");
+    expect(await record(reference)).toMatchObject({ status: "NEW", needsReview: true });
   });
 
   it("refuses a review with an unknown project", async () => {

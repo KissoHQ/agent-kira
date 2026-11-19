@@ -364,6 +364,20 @@ describe("changeRequestStatus", () => {
     ]);
   });
 
+  it("refuses a change made on a request that changed since the person opened it", async () => {
+    const reference = await portalRequest("Erreur 500 sur le portail");
+    const [seen] = await getDatabase().select({ updatedAt: requests.updatedAt }).from(requests);
+    await getDatabase().update(requests).set({ status: "IN_PROGRESS" });
+
+    expect(
+      await changeRequestStatus(getAppDatabase(), reviewer, {
+        reference,
+        status: "CLOSED",
+        version: seen?.updatedAt.toISOString(),
+      }),
+    ).toEqual({ ok: false, error: "CHANGED" });
+  });
+
   it("records nothing when the status does not change", async () => {
     const reference = await portalRequest("Erreur 500 sur le portail");
 

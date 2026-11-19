@@ -153,7 +153,7 @@ The history of each request.
 | `message_id`       | Message that caused the event                                                                                                                          |
 | `data`             | Details: changed values, classification, confidence, reason, or the question the agent passed to the team (`REVIEW_REQUESTED`)                         |
 
-Events can only be added. A database trigger rejects any update or deletion, so the history cannot be rewritten.
+Events can only be added. A database trigger rejects any update or deletion, so the history cannot be rewritten. The one exception is `pnpm contact:erase`, run as the owner of the database: it removes the texts of a person from `data` (a title, a question, changed texts), in a transaction that sets `request_agent.erasing`. The roles of the application have no right to update events at all.
 
 ### `staff_accounts`
 

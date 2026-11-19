@@ -267,7 +267,10 @@ describe("updateRequest", () => {
       changes: { priority: "CRITICAL", title: "Paiement refusé", projectKey: "crm" },
     });
 
-    expect(result).toMatchObject({ ok: true, value: { priority: "CRITICAL", projectKey: "CRM" } });
+    expect(result).toMatchObject({
+      ok: true,
+      value: { priority: "CRITICAL", projectKey: "CRM", needsReview: true },
+    });
     const [updated] = await getDatabase().select().from(events).where(eq(events.type, "UPDATED"));
     expect(updated?.data).toEqual({
       changes: {
@@ -275,6 +278,19 @@ describe("updateRequest", () => {
         projectKey: { from: "SHOP", to: "CRM" },
       },
     });
+  });
+
+  it("refuses to change the request of a colleague of the same project", async () => {
+    const reference = await createdReference(alice, { projectKey: "SHOP" });
+
+    // Chloé works on SHOP too, and can read the request, but did not make it.
+    const result = await updateRequest(
+      getAppDatabase(),
+      await turnFor("chloe.durand@initech.example"),
+      { reference, changes: { priority: "LOW" } },
+    );
+
+    expect(result).toEqual({ ok: false, error: "NOT_REQUESTER" });
   });
 
   it("hides the requests of other organizations", async () => {

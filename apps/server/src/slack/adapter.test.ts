@@ -1,12 +1,12 @@
 import { messages, requests, storeInboundMessage, type TurnInput } from "@request-agent/core";
-import { useAppTestDatabase, useTestDatabase } from "@request-agent/core/testing";
+import { useServerTestDatabase, useTestDatabase } from "@request-agent/core/testing";
 import { describe, expect, it } from "vitest";
 
 import type { HandledMessage } from "../mastra/agents/handle-message";
 import { type SlackEventSource, startSlackAdapter } from "./adapter";
 
 const getDatabase = useTestDatabase();
-const getAppDatabase = useAppTestDatabase();
+const getAppDatabase = useServerTestDatabase();
 
 const botUserId = "UBOT";
 const teamId = "T1";

@@ -13,7 +13,7 @@ import {
   classified,
   seedDatabase,
   testReviewThreshold,
-  useAppTestDatabase,
+  useServerTestDatabase,
   useTestDatabase,
 } from "@request-agent/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -26,7 +26,7 @@ import { createRequestAgent } from "./mastra/agents/request-agent";
 import { type SlackEventSource, startSlackAdapter } from "./slack/adapter";
 
 const getDatabase = useTestDatabase();
-const getAppDatabase = useAppTestDatabase();
+const getAppDatabase = useServerTestDatabase();
 
 beforeEach(async () => {
   await seedDatabase(getDatabase());

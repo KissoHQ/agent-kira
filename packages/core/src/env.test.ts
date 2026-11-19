@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   loadAppDatabaseEnv,
+  loadServerDatabaseEnv,
   loadClassifierEnv,
   loadDatabaseEnv,
   loadKnowledgeEnv,
@@ -79,5 +80,19 @@ describe("loadKnowledgeEnv", () => {
     expect(
       loadKnowledgeEnv({ ...base, OLLAMA_EMBEDDING_MODEL: "bge-m3" }).OLLAMA_EMBEDDING_MODEL,
     ).toBe("bge-m3");
+  });
+});
+
+describe("loadServerDatabaseEnv", () => {
+  it("returns the URL of the role of the agent server, and refuses any other role", () => {
+    const env = {
+      SERVER_DATABASE_URL: "postgresql://request_agent_server:secret@127.0.0.1:5433/request_agent",
+    };
+    expect(loadServerDatabaseEnv(env)).toEqual(env);
+    expect(() =>
+      loadServerDatabaseEnv({
+        SERVER_DATABASE_URL: "postgresql://request_agent_app:secret@127.0.0.1:5433/request_agent",
+      }),
+    ).toThrow(/request_agent_server/);
   });
 });

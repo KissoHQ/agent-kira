@@ -1,5 +1,5 @@
 export { seedDatabase } from "../src/db/seed.ts";
-export { useAppTestDatabase, useTestDatabase } from "./database.ts";
+export { useAppTestDatabase, useServerTestDatabase, useTestDatabase } from "./database.ts";
 export {
   alice,
   bruno,

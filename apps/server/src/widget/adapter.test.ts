@@ -13,7 +13,7 @@ import {
 import {
   bruno,
   seedDatabase,
-  useAppTestDatabase,
+  useServerTestDatabase,
   useTestDatabase,
 } from "@request-agent/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -24,7 +24,7 @@ import { maxWaitingMessages, maxWaitingPerAddress, messageRate } from "./admissi
 import { signIdentity } from "./identity";
 
 const getDatabase = useTestDatabase();
-const getAppDatabase = useAppTestDatabase();
+const getAppDatabase = useServerTestDatabase();
 
 const secret = "a-secret-shared-with-the-portal-application";
 const portal = "https://portal.example.com";

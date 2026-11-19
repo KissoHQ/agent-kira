@@ -409,7 +409,9 @@ export function updateRequest(
   db: Database,
   turn: Turn,
   input: UpdateRequestInput,
-): Promise<Result<RequestView, "NOT_FOUND" | "PROJECT_NOT_ALLOWED" | "NO_CHANGES">> {
+): Promise<
+  Result<RequestView, "NOT_FOUND" | "NOT_REQUESTER" | "PROJECT_NOT_ALLOWED" | "NO_CHANGES">
+> {
   return db.transaction(async (tx) => {
     // Every command locks the message before the request, so two commands of one turn cannot each
     // hold the lock the other waits for.
@@ -417,6 +419,11 @@ export function updateRequest(
     const request = await lockVisibleRequest(tx, turn, input.reference);
     if (request === undefined) {
       return fail("NOT_FOUND");
+    }
+    // A sender changes only the requests they made: a colleague of the same project, or text that
+    // another person wrote and the model read, cannot rewrite theirs.
+    if (turn.actor.kind !== "contact" || request.requesterContactId !== turn.actor.contactId) {
+      return fail("NOT_REQUESTER");
     }
 
     const values: Partial<RequestRow> = {};
@@ -446,7 +453,11 @@ export function updateRequest(
       return fail("NO_CHANGES");
     }
 
-    await tx.update(requests).set(values).where(eq(requests.id, request.id));
+    // A person of the team checks what the agent changed.
+    await tx
+      .update(requests)
+      .set({ ...values, needsReview: true })
+      .where(eq(requests.id, request.id));
     await tx.insert(events).values({
       requestId: request.id,
       type: "UPDATED",

@@ -1,0 +1,89 @@
+# KIRA on one server: the database, the migrations, the agent server and the web interface.
+#   docker compose -f compose.production.yaml up -d --build
+# The settings come from .env on the server, or from the file named by KIRA_ENV_FILE (see the
+# Deployment part of the README). Inside this network, the database is reached as postgres:5432:
+# DATABASE_URL, APP_DATABASE_URL and SERVER_DATABASE_URL name that host. The agent server and the
+# web interface listen on this machine only: a reverse proxy serves them over HTTPS. Ollama runs
+# elsewhere, at OLLAMA_BASE_URL. Each service runs once: the agent server and the web interface
+# keep counts in memory.
+name: kira
+
+services:
+  postgres:
+    # PostgreSQL 18 with the pgvector extension, pinned by tag and digest, as in compose.yaml.
+    image: pgvector/pgvector:0.8.7-pg18-trixie@sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6facccad2e0
+    environment:
+      POSTGRES_USER: request_agent
+      POSTGRES_DB: request_agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U request_agent -d request_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    restart: unless-stopped
+
+  # Applies the migrations and sets the passwords of the roles, then stops. The other services start
+  # only once it succeeded, so they never run on a schema behind their code.
+  migrate:
+    build:
+      context: .
+      target: web
+    command: ["node", "packages/core/scripts/migrate.ts"]
+    env_file: ${KIRA_ENV_FILE:-.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  server:
+    build:
+      context: .
+      target: server
+    env_file: ${KIRA_ENV_FILE:-.env}
+    environment:
+      ATTACHMENTS_DIR: /data/attachments
+    volumes:
+      - attachments:/data/attachments
+    ports:
+      - "127.0.0.1:4111:4111"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      target: web
+    env_file: ${KIRA_ENV_FILE:-.env}
+    environment:
+      ATTACHMENTS_DIR: /data/attachments
+    volumes:
+      # The interface only reads the files the widget stored.
+      - attachments:/data/attachments:ro
+    ports:
+      - "127.0.0.1:4112:4112"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  # Files attached through the widget, shared by the agent server and the web interface.
+  attachments:

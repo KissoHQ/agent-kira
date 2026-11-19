@@ -440,6 +440,9 @@ describe("the widget channel", () => {
       fromAddress("203.0.113.7"),
     );
 
+    // The message without file is handled before the next test empties the database.
+    await widget.idle();
+
     expect(full.status).toBe(503);
     expect(withoutFile.status).toBe(202);
     expect(await readdir(widget.folder)).toHaveLength(2);

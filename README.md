@@ -102,6 +102,8 @@ cp .env.example .env
 | `OLLAMA_MODEL`                                                             | Model used by the agent. It must be pulled first                                                                                                | `ornith:9b`                                                                      |
 | `OLLAMA_EMBEDDING_MODEL`                                                   | Optional. Model of the knowledge base, with vectors of 1024 numbers. It must be pulled first                                                    | `qwen3-embedding:0.6b` (default)                                                 |
 | `MASTRA_HOST`                                                              | Optional. Address the agent server listens on. Set `0.0.0.0` only behind an HTTPS reverse proxy or in a container, to publish the widget        | `127.0.0.1` (default)                                                            |
+| `OLLAMA_API_KEY`                                                           | Optional. Bearer token of an authenticating proxy in front of a remote Ollama                                                                   | —                                                                                |
+| `LOG_LEVEL`                                                                | Optional. Level of the logs of the agent server: `debug`, `info`, `warn` or `error`                                                             | `info` (default)                                                                 |
 | `CLASSIFICATION_REVIEW_THRESHOLD`                                          | Optional. Below this confidence, from 0 to 1, a request waits for a human review                                                                | `0.8` (default)                                                                  |
 | `SLACK_BOT_TOKEN`                                                          | Optional. Bot token of the Slack app. Without the two Slack tokens, the server runs without Slack                                               | `xoxb-…`                                                                         |
 | `SLACK_APP_TOKEN`                                                          | Optional. App-level token with the `connections:write` scope, for Socket Mode                                                                   | `xapp-…`                                                                         |
@@ -123,6 +125,7 @@ cp .env.example .env
 | `WIDGET_TRUST_PROXY`                                                       | Optional. `true` only behind a reverse proxy that adds the address of the person to `X-Forwarded-For`                                           | `false` (default)                                                                |
 | `WEB_TIME_ZONE`                                                            | Optional. Time zone of the dates shown in the web interface, as an IANA name                                                                    | `Europe/Paris` (default)                                                         |
 | `WEB_TRUST_PROXY`                                                          | Optional. `true` only behind a reverse proxy that adds the address of the person to `X-Forwarded-For`                                           | `false` (default)                                                                |
+| `WEB_PUBLIC_ORIGIN`                                                        | Optional. Origin of the interface behind a reverse proxy; forms are only accepted from it                                                       | `https://kira.example.com`                                                       |
 
 Set a password of your choice, and use the same password and port in `DATABASE_URL` and `TEST_DATABASE_URL`. Docker Compose refuses to start the database without a password. This password is applied only when the database is created, at the first start: changing it later has no effect on the existing database.
 
@@ -169,6 +172,56 @@ Production build and start:
 pnpm build
 pnpm start
 ```
+
+## Deployment
+
+KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the database, a step that applies the migrations, the agent server and the web interface. Their images are built from `Dockerfile` and run as an unprivileged user. Ollama runs apart, on a machine with enough memory, ideally with a GPU: on a CPU, an answer takes from 2 to 8 minutes.
+
+1. On the server, create `.env` from `.env.example`. These variables differ from a local install:
+
+   | Variable                                                                  | Value on the server                                                                                                                    |
+   | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+   | `DATABASE_URL`, `APP_DATABASE_URL`, `SERVER_DATABASE_URL`                 | Host `postgres:5432`, the database service of the Compose file, such as `postgresql://request_agent_app:…@postgres:5432/request_agent` |
+   | `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`                                       | Address of Ollama as the containers reach it, and the key of the proxy in front of it, if any                                          |
+   | `WEB_PUBLIC_ORIGIN`, `WEB_TRUST_PROXY`                                    | Address of the interface, such as `https://kira.example.com`, and `true`                                                               |
+   | `WIDGET_ALLOWED_ORIGINS`, `WIDGET_IDENTITY_SECRETS`, `WIDGET_TRUST_PROXY` | Origins and secrets of the applications that embed the widget, and `true`                                                              |
+
+   `MASTRA_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file.
+
+2. Build and start everything. The `migrate` service applies the migrations and sets the passwords of the roles; the agent server and the web interface start once it succeeded:
+
+   ```bash
+   docker compose -f compose.production.yaml up -d --build
+   ```
+
+3. Create the first administrator:
+
+   ```bash
+   docker compose -f compose.production.yaml run --rm -it web node packages/core/scripts/add-staff.ts --email dana.support@team.example --name "Dana Support" --role admin
+   ```
+
+4. Put a reverse proxy with HTTPS in front of the two services, which listen on this machine only:
+   - the web interface, such as `https://kira.example.com`, to `127.0.0.1:4112`;
+   - the widget, such as `https://agent.example.com/widget/`, to `127.0.0.1:4111`. The built agent server serves nothing else than `/widget/`, `/health` and `/ready`.
+
+5. Check the services. `/health` says that the process answers; `/ready` also checks the database, and for the agent server the model in Ollama and the start of each channel, and answers 503 with what is missing:
+
+   ```bash
+   curl http://127.0.0.1:4111/ready
+   curl http://127.0.0.1:4112/ready
+   ```
+
+To update, get the new version and run the same `up` command: the migrations run first. The logs are read with `docker compose -f compose.production.yaml logs -f server web`; `LOG_LEVEL` sets their level. Mastra sends no usage statistics: `MASTRA_TELEMETRY_DISABLED` is set.
+
+Daily maintenance, such as from cron, and backups of the database and of the files of the widget:
+
+```bash
+docker compose -f compose.production.yaml run --rm web node packages/core/scripts/purge.ts
+docker compose -f compose.production.yaml exec -T postgres pg_dump -U request_agent request_agent > kira.sql
+docker run --rm -v kira_attachments:/data:ro -v "$PWD":/backup node:26.12.1-bookworm-slim tar czf /backup/attachments.tgz -C /data .
+```
+
+The agent server and the web interface each run as one container: they keep the queue of messages and the limits of sign-in and of the widget in memory.
 
 ## Web interface
 

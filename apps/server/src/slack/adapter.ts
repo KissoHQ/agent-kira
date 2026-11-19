@@ -1,6 +1,6 @@
 import {
   type Database,
-  isKnownConversation,
+  hasWrittenIn,
   listPendingReplies,
   listUnhandledMessages,
   markHandled,
@@ -144,12 +144,13 @@ export async function startSlackAdapter(
 
   async function receive(event: unknown, ack: () => Promise<void>): Promise<void> {
     const message = parseSlackEvent(event, context);
-    // A plain channel message is only kept when it continues a thread the agent follows: the
-    // other messages of the channel are not stored.
+    // A plain channel message is only kept when it continues a thread the agent follows, from
+    // someone who already wrote to the agent there: the other messages of the channel, and a
+    // colleague of the team answering in the thread, are not stored.
     const relevant =
       message !== undefined &&
       (message.addressedToAgent ||
-        (await isKnownConversation(db, "SLACK", conversationId(message))));
+        (await hasWrittenIn(db, "SLACK", conversationId(message), message.user)));
     if (!relevant) {
       await ack();
       return;

@@ -136,7 +136,11 @@ async function slackChannel(handle: Handler) {
   return {
     posted,
     mention: async (event: Record<string, unknown>) => {
-      await mention?.({ event: { type: "app_mention", ...event }, ack: () => Promise.resolve() });
+      // A message of a member of the workspace, as Slack sends it, with its team.
+      await mention?.({
+        event: { type: "app_mention", team: "T1", ...event },
+        ack: () => Promise.resolve(),
+      });
       await adapter.idle();
     },
   };

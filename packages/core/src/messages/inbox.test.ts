@@ -6,7 +6,6 @@ import {
   type ChannelMessage,
   conversationOfMessage,
   cutText,
-  isKnownConversation,
   maxBodyTextLength,
   maxSubjectLength,
   storeInboundMessage,
@@ -99,23 +98,6 @@ describe("text limits", () => {
     expect(message?.raw).toEqual({ text: longBody });
     const [conversation] = await getDatabase().select().from(conversations);
     expect(conversation?.subject).toHaveLength(maxSubjectLength);
-  });
-});
-
-describe("isKnownConversation", () => {
-  it("tells whether a thread is already followed", async () => {
-    expect(
-      await isKnownConversation(getAppDatabase(), "SLACK", slackMessage.conversationExternalId),
-    ).toBe(false);
-
-    await storeInboundMessage(getAppDatabase(), slackMessage);
-
-    expect(
-      await isKnownConversation(getAppDatabase(), "SLACK", slackMessage.conversationExternalId),
-    ).toBe(true);
-    expect(
-      await isKnownConversation(getAppDatabase(), "EMAIL", slackMessage.conversationExternalId),
-    ).toBe(false);
   });
 });
 

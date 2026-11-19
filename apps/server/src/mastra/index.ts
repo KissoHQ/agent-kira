@@ -1,3 +1,4 @@
+import { ConsoleLogger } from "@mastra/core/logger";
 import { Mastra } from "@mastra/core/mastra";
 import { createOllama } from "ollama-ai-provider-v2";
 
@@ -9,12 +10,23 @@ import { startWidgetIfConfigured, widgetRoutes } from "../widget/start";
 import { createRequestAgent } from "./agents/request-agent";
 import { apiGuard } from "./api-guard";
 
+// No data leaves the machine (decision 001): the usage statistics Mastra sends by default are off,
+// unless MASTRA_TELEMETRY_DISABLED says otherwise.
+process.env.MASTRA_TELEMETRY_DISABLED ??= "1";
+
 const env = loadEnv();
-const ollama = createOllama({ baseURL: env.OLLAMA_BASE_URL });
+const ollama = createOllama({
+  baseURL: env.OLLAMA_BASE_URL,
+  headers:
+    env.OLLAMA_API_KEY === undefined
+      ? undefined
+      : { authorization: `Bearer ${env.OLLAMA_API_KEY}` },
+});
 const requestAgent = createRequestAgent(ollama(env.OLLAMA_MODEL));
 
 export const mastra = new Mastra({
   agents: { requestAgent },
+  logger: new ConsoleLogger({ name: "KIRA", level: env.LOG_LEVEL }),
   server: {
     host: env.MASTRA_HOST,
     apiRoutes: widgetRoutes(),

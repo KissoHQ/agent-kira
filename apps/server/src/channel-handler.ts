@@ -43,6 +43,7 @@ export function createChannelHandler(
     baseUrl: classifierEnv.OLLAMA_BASE_URL,
     model: classifierEnv.OLLAMA_MODEL,
     timeoutMs: classificationTimeoutMs,
+    apiKey: classifierEnv.OLLAMA_API_KEY,
   };
   const classify = createOllamaClassifier(ollama);
   const judgeDuplicate = createOllamaDuplicateJudge(ollama);
@@ -50,6 +51,7 @@ export function createChannelHandler(
     baseUrl: classifierEnv.OLLAMA_BASE_URL,
     model: loadKnowledgeEnv().OLLAMA_EMBEDDING_MODEL,
     timeoutMs: embeddingTimeoutMs,
+    apiKey: classifierEnv.OLLAMA_API_KEY,
   });
   return {
     db,

@@ -9,10 +9,27 @@ const validEnv = {
 
 describe("loadEnv", () => {
   it("returns the parsed configuration when every variable is valid", () => {
-    expect(loadEnv({ ...validEnv, MASTRA_HOST: "0.0.0.0" })).toEqual({
+    expect(
+      loadEnv({ ...validEnv, MASTRA_HOST: "0.0.0.0", OLLAMA_API_KEY: "key", LOG_LEVEL: "warn" }),
+    ).toEqual({
       ...validEnv,
       MASTRA_HOST: "0.0.0.0",
+      OLLAMA_API_KEY: "key",
+      LOG_LEVEL: "warn",
     });
+  });
+
+  it("logs at the info level and sends no key to Ollama by default", () => {
+    expect(loadEnv({ ...validEnv, OLLAMA_API_KEY: "" })).toMatchObject({
+      LOG_LEVEL: "info",
+      OLLAMA_API_KEY: undefined,
+    });
+  });
+
+  it("rejects an Ollama URL without /api, which answers 404 to every call", () => {
+    expect(() => loadEnv({ ...validEnv, OLLAMA_BASE_URL: "http://127.0.0.1:11434" })).toThrow(
+      /Must end with \/api/,
+    );
   });
 
   it("listens on this machine only by default, including with an empty value", () => {

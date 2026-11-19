@@ -1,10 +1,15 @@
 import { isAbsolute } from "node:path";
 
+import { ollamaApiKey, ollamaBaseUrl } from "@request-agent/core";
 import { z } from "zod";
 
 const envSchema = z.object({
-  OLLAMA_BASE_URL: z.url(),
+  OLLAMA_BASE_URL: ollamaBaseUrl,
   OLLAMA_MODEL: z.string().min(1),
+  OLLAMA_API_KEY: ollamaApiKey,
+  // Level of the logs of the server: info by default, so the start of each channel is shown, even
+  // when Mastra runs in production mode.
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   // Address the server listens on. Only this machine by default: a reverse proxy or a container
   // that publishes the widget sets it to 0.0.0.0.
   MASTRA_HOST: z.preprocess(

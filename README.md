@@ -287,9 +287,9 @@ The agent connects to Slack in Socket Mode: the server opens the connection, so 
 5. Start the server with `pnpm dev`. The log shows `Slack adapter listening`.
 6. In Slack, invite the bot to a channel with `/invite @Request agent`, then mention it, or send it a direct message.
 
-The agent handles mentions, direct messages, and replies in the threads it already takes part in. It ignores the other messages of a channel, without storing them. It adds 👀 to a message it handles, then answers in its thread, usually 2 to 7 minutes later on a CPU.
+The agent handles mentions, direct messages, messages with a file, and replies in the threads it already takes part in, from people who already wrote to it there: a colleague who answers in the thread without naming the agent is not handled. It ignores the other messages of a channel, without storing them. It adds 👀 to a message it handles, then answers in its thread, usually 2 to 7 minutes later on a CPU. Its answers are posted as plain text: they cannot notify a channel or hide a link.
 
-A Slack user only gets rights when a contact with their Slack member ID exists in the database (`contacts.slack_user_id`). A channel dedicated to a project is declared in `project_channels`, with the channel ID.
+A Slack user only gets rights when a contact with their Slack member ID exists, and when Slack says they belong to the workspace of the app: a person of another organization, such as in a Slack Connect channel, is unverified. An administrator sets the Slack member ID of a contact, and the channels dedicated to a project, in the web interface.
 
 ## Connecting email
 

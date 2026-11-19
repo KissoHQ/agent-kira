@@ -293,6 +293,31 @@ describe("sign-in", () => {
     expect(await response.text()).toContain("E-mail ou mot de passe incorrect.");
   });
 
+  it("accepts the forms of its public origin behind a reverse proxy, and logs each sign-in", async () => {
+    const events: string[] = [];
+    const proxied = createWebApp({
+      db: getAppDatabase(),
+      timeZone: "Europe/Paris",
+      publicOrigin: "https://kira.example.com",
+      onAudit: (event) => events.push(event),
+    });
+    // The proxy reaches the interface over plain HTTP on this machine.
+    const signInFrom = (from: string, secret: string) =>
+      proxied.request("http://127.0.0.1:4112/login", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: from },
+        body: new URLSearchParams({ email, password: secret }),
+      });
+
+    expect((await signInFrom("https://kira.example.com", "wrong password")).status).toBe(401);
+    expect((await signInFrom("https://kira.example.com", password)).status).toBe(303);
+    expect((await signInFrom("https://evil.example", password)).status).toBe(403);
+    expect(events).toEqual([
+      `Sign-in refused for ${email} from unknown: wrong email or password`,
+      `Signed in: ${email} from unknown`,
+    ]);
+  });
+
   it("refuses a form sent from another site", async () => {
     const cookie = await signIn();
     const reference = await portalRequest("Le portail plante.");
@@ -452,6 +477,10 @@ describe("pages", () => {
     expect(await response.text()).toContain('<script src="/app.js" defer></script>');
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("is ready when the database answers", async () => {
+    expect((await app.request("/ready")).status).toBe(200);
   });
 
   it("serves the stylesheet, the script, the icon and the health check without a session", async () => {

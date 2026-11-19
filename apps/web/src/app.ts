@@ -17,6 +17,7 @@ import {
   markDuplicate,
   markDuplicateInput,
   openSession,
+  pingDatabase,
   reviewRequest,
   reviewRequestInput,
   type StaffMember,
@@ -55,6 +56,12 @@ export interface WebAppOptions {
   trustProxy?: boolean;
   // Called when a request fails unexpectedly, so the error is logged without being shown.
   onError?: (error: Error) => void;
+  // Called for each sign-in, refused or not, and each sign-out, so an attack on the accounts shows
+  // in the logs (OWASP Logging Cheat Sheet). Never with a password.
+  onAudit?: (event: string) => void;
+  // Origin of the interface as people reach it, such as https://kira.example.com. Behind a reverse
+  // proxy, the request the interface sees has another origin, and forms would be refused.
+  publicOrigin?: string;
   // Folder where the widget writes the files people attach. Without it, no file is downloaded.
   attachmentsDir?: string;
 }
@@ -162,12 +169,16 @@ export function createWebApp(options: WebAppOptions) {
     fragment: Fragment,
     status: 200 | 400 | 401 | 403 | 404 | 409 | 429 | 503 = 200,
   ) => c.html(fragment, status);
+  const audit = (event: string) => {
+    options.onAudit?.(event);
+  };
   const refuse = (
     c: Context<Env>,
     admission: Admission & { allowed: false },
     email: string,
     next: string,
   ) => {
+    audit(`Sign-in refused for ${email}: too many attempts`);
     c.header("Retry-After", String(Math.ceil(admission.retryAfterMs / 1000)));
     return render(c, signInPage(tooManyAttempts(admission.retryAfterMs), email, next), 429);
   };
@@ -190,7 +201,7 @@ export function createWebApp(options: WebAppOptions) {
   );
   // Forms are only accepted from pages of this site, checked with the Origin and Sec-Fetch-Site
   // headers that browsers send.
-  app.use(csrf());
+  app.use(csrf(options.publicOrigin === undefined ? {} : { origin: options.publicOrigin }));
   app.use(bodyLimit({ maxSize: maxFormBytes, onError: (c) => c.text("Payload Too Large", 413) }));
   app.use(async (c, next) => {
     await next();
@@ -201,6 +212,10 @@ export function createWebApp(options: WebAppOptions) {
   });
 
   app.get("/health", (c) => c.text("ok"));
+  // Ready only when the database answers, so an orchestrator sends no one to a broken interface.
+  app.get("/ready", async (c) =>
+    (await pingDatabase(db)) ? c.text("ready") : c.text("database unreachable", 503),
+  );
   app.get("/app.css", (c) =>
     c.body(stylesheet, 200, { "Content-Type": "text/css; charset=utf-8" }),
   );
@@ -239,8 +254,10 @@ export function createWebApp(options: WebAppOptions) {
     }
     const staff = check.value;
     if (staff === undefined) {
+      audit(`Sign-in refused for ${email} from ${address}: wrong email or password`);
       return render(c, signInPage(invalidCredentials, email, next), 401);
     }
+    audit(`Signed in: ${email} from ${address}`);
     emailLimiter.clear(email);
     addressLimiter.giveBack(address);
     // A session the browser still held ends: signing in always starts a new one.
@@ -279,6 +296,7 @@ export function createWebApp(options: WebAppOptions) {
   });
 
   app.post("/logout", async (c) => {
+    audit(`Signed out: ${c.get("staff").email}`);
     await closeSession(db, c.get("sessionToken"));
     deleteCookie(c, sessionCookie, { prefix: cookiePrefix, path: "/", secure: true });
     return c.redirect("/login", 303);

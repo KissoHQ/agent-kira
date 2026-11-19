@@ -1,0 +1,13 @@
+# Proposes updates of the dependencies and of the pinned actions once a week, so a fixed security
+# advisory does not wait for someone to look.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

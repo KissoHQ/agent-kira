@@ -309,6 +309,19 @@ curl -X POST http://localhost:4111/api/agents/request-agent/generate \
 
 The JSON response contains the answer in the `text` field. This route reaches the agent without its request tools: they are only given to messages received through a channel, such as Slack.
 
+## Personal data
+
+A person who asks for their data to be erased (GDPR, article 17) is erased with one command, as the owner of the database. Without `--confirm`, it only shows what it would erase:
+
+```bash
+pnpm contact:erase --email bruno.leroy@globex.example
+pnpm contact:erase --email bruno.leroy@globex.example --confirm
+```
+
+It replaces what the person wrote and the answers they got with "[effacé à la demande de la personne]", empties the original payloads, removes the texts of their requests and the texts kept in their history, deletes their files from `ATTACHMENTS_DIR`, and replaces their name, email and Slack ID. Nothing is deleted from the history: the requests keep their type, status, project and dates. `--slack U012AB3CD` names a Slack person. An account of the team is disabled in the web interface instead.
+
+`pnpm db:purge` deletes the sessions of the web interface that ended more than 30 days ago, and empties the original payload of the messages handled more than 365 days ago (`--source-retention-days` changes it). Their text stays. It is meant to run once a day, such as from cron.
+
 ## Tests and code quality
 
 | Command                    | What it checks                                                                                                                                                                                                                                                                                                               |

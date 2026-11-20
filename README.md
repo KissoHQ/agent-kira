@@ -535,7 +535,7 @@ All dependency versions are declared once in the `catalog` of `pnpm-workspace.ya
 
 - Slack messages, emails and widget messages are handled one at a time. A message left unhandled by a restart is handled again at the next start.
 - The agent works at most 15 minutes on one message. Beyond, the message is filed for a person, who gets its reference.
-- An answer is kept with its message until the channel takes it. When Slack or the mail server refuses it, it is sent again after 1, 5 and 15 minutes, then every 15 minutes, and again after a restart.
+- An answer is kept with its message until the channel takes it. When Slack or the mail server refuses it, it is sent again after 1, 5 and 15 minutes, then every 15 minutes, and again after a restart. It is given up after 100 attempts, about a day, or at once when the refusal is final: a Slack channel deleted or archived, the bot removed from it, an address or a message the mail server refuses for good. The log says so, and the request stays in the web interface. A Slack call waits at most 30 seconds.
 - When Slack or the mail server is unreachable at startup, the server tries again after 10 seconds, then waits longer each time, up to every 5 minutes.
 - Duplicates are found among requests sharing words or spelling with the message: a rewording with no word in common, such as "CB" for "carte bancaire", is missed.
 - Email attachments are described (name, type, size) in the interface but cannot be downloaded: their content is only kept inside the stored source of the email. Files sent through the widget are stored and can be downloaded by the team.

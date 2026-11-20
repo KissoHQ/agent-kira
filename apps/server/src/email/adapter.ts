@@ -10,6 +10,7 @@ import {
   storeInboundMessage,
   storeOutboundMessage,
   type RateLimit,
+  requestReferenceOf,
   type TurnInput,
 } from "@request-agent/core";
 
@@ -22,6 +23,7 @@ import {
   defaultRetryDelaysMs,
   handleReliably,
 } from "../reliable-handling";
+import { isPermanentSmtpError } from "./errors";
 import { type ParsedEmail, parseEmail } from "./parse";
 import { checkSender, isAutomatic, type SenderCheck, type TrustSettings } from "./policy";
 
@@ -74,9 +76,9 @@ const storedSource = z.object({ source: z.string() });
 
 // The From address of an email that is not verified can be forged, to make the agent write to
 // someone else from the domain of the company. Such a sender never gets a text written from their
-// message: only this fixed notice, with the reference of the request when there is one.
-export function acknowledgementOf(reply: string): string {
-  const reference = /REQ-\d{1,9}/.exec(reply)?.[0];
+// message: only this fixed notice, with the reference of the request the system filed the message
+// under, never one read in a text, which the sender could have written.
+export function acknowledgementOf(reference: string | undefined): string {
   const notice =
     "Bonjour,\n\nNous avons bien reçu votre message. L'équipe va l'examiner et reviendra vers vous si nécessaire.";
   return reference === undefined ? notice : `${notice}\n\nRéférence : ${reference}`;
@@ -175,6 +177,7 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
     email: ParsedEmail,
     sender: SenderCheck,
     text: { kind: "agent" | "system"; value: string },
+    reference: string | undefined,
   ): string | undefined {
     if (sender.forged) {
       logger.info(`No answer to ${email.messageId}: DMARC failed for the domain of its sender`);
@@ -185,19 +188,20 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
       logger.info(`No answer to ${email.messageId}: its sender reached the limit of answers`);
       return undefined;
     }
-    return verified || text.kind === "system" ? text.value : acknowledgementOf(text.value);
+    return verified || text.kind === "system" ? text.value : acknowledgementOf(reference);
   }
 
   // Sends the answer kept with a handled email, again later if the mail server refuses it.
-  function answer(email: ParsedEmail, thread: string, messageId: string, reply: string) {
-    const text = answerText(email, checkSender(email, options.trust), {
-      kind: "agent",
-      value: reply,
-    });
+  async function answer(email: ParsedEmail, thread: string, messageId: string, reply: string) {
+    const sender = checkSender(email, options.trust);
+    const reference =
+      sender.trust === "VERIFIED" ? undefined : await requestReferenceOf(db, messageId);
+    const text = answerText(email, sender, { kind: "agent", value: reply }, reference);
     return deliver({
       messageId,
       send: async () => (text === undefined ? undefined : send(email, text)),
       record: (sent) => record(email, thread, sent),
+      isPermanent: isPermanentSmtpError,
     });
   }
 
@@ -227,7 +231,12 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
     } catch (error) {
       // Nothing could be kept for this email: the notice is sent once, as it is.
       logger.error(`Email ${email.messageId} could not be handled`, error);
-      const text = answerText(email, sender, { kind: "system", value: unavailableReply });
+      const text = answerText(
+        email,
+        sender,
+        { kind: "system", value: unavailableReply },
+        undefined,
+      );
       if (text !== undefined) {
         await send(email, text)
           .then((sent) => record(email, thread, sent))

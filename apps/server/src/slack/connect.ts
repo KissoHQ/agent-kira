@@ -18,13 +18,21 @@ export function escapeForSlack(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+const slackCallTimeoutMs = 30_000;
+
 // Opens the Socket Mode connection: the server connects to Slack, so no public address is needed.
 // Events arrive on a connection authenticated by the app token, so their sender is the Slack user.
 export async function connectSlack(tokens: {
   appToken: string;
   botToken: string;
 }): Promise<SlackConnection> {
-  const client = new WebClient(tokens.botToken);
+  // No retry and a bounded wait inside a call: the answers are sent one at a time, and the delivery
+  // of the server tries again later. The default of the client tries for about 30 minutes, with no
+  // limit on one call, which would hold every other Slack message during an outage of Slack.
+  const client = new WebClient(tokens.botToken, {
+    timeout: slackCallTimeoutMs,
+    retryConfig: { retries: 0 },
+  });
   const identity = await client.auth.test();
   if (identity.user_id === undefined || identity.team_id === undefined) {
     throw new Error("Slack did not return the identity of the bot");

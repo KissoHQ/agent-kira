@@ -101,7 +101,7 @@ cp .env.example .env
 | `OLLAMA_BASE_URL`                                                          | Ollama API endpoint. Must end with `/api`                                                                                                       | `http://127.0.0.1:11434/api`                                                     |
 | `OLLAMA_MODEL`                                                             | Model used by the agent. It must be pulled first                                                                                                | `ornith:9b`                                                                      |
 | `OLLAMA_EMBEDDING_MODEL`                                                   | Optional. Model of the knowledge base, with vectors of 1024 numbers. It must be pulled first                                                    | `qwen3-embedding:0.6b` (default)                                                 |
-| `MASTRA_HOST`                                                              | Optional. Address the agent server listens on, for `/health` and `/ready`. Set `0.0.0.0` only in a container                                    | `127.0.0.1` (default)                                                            |
+| `MASTRA_HOST`                                                              | Optional. Address the agent server listens on, for `/health` and `/ready`. Keep it on this machine: Mastra reads JSON bodies whole              | `127.0.0.1` (default)                                                            |
 | `OLLAMA_API_KEY`                                                           | Optional. Bearer token of an authenticating proxy in front of a remote Ollama                                                                   | —                                                                                |
 | `LOG_LEVEL`                                                                | Optional. Level of the logs of the agent server: `debug`, `info`, `warn` or `error`                                                             | `info` (default)                                                                 |
 | `CLASSIFICATION_REVIEW_THRESHOLD`                                          | Optional. Below this confidence, from 0 to 1, a request waits for a human review                                                                | `0.8` (default)                                                                  |
@@ -206,14 +206,17 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
    - the web interface, such as `https://kira.example.com`, to `127.0.0.1:4112`;
    - the widget, such as `https://widget.example.com/widget/`, to `127.0.0.1:4113`, with a body limit of 16 MB.
 
-   The agent server itself, on `127.0.0.1:4111`, stays out of the proxy: it only answers `/health` and `/ready`, for this machine.
+   The Mastra server of the agent, on port 4111, is not published: it listens inside its container only, where its health check reads `/ready`.
 
-5. Check the services. `/health` says that the process answers; `/ready` also checks the database, and for the agent server the model in Ollama and the start of each channel, and answers 503 with what is missing:
+5. Check the services. `/ready` checks the database, and for the agent server the model in Ollama and the start of each channel, and answers 503 with what is missing. Its checks run at most once every 5 seconds:
 
    ```bash
-   curl http://127.0.0.1:4111/ready
+   docker compose -f compose.production.yaml ps
+   docker compose -f compose.production.yaml exec server node -e "fetch('http://127.0.0.1:4111/ready').then((r) => r.text()).then(console.log)"
    curl http://127.0.0.1:4112/ready
    ```
+
+   `ps` shows the agent server `healthy` once everything it needs is ready.
 
 To update, get the new version and run the same `up` command: the migrations run first. The logs are read with `docker compose -f compose.production.yaml logs -f server web`; `LOG_LEVEL` sets their level. Mastra sends no usage statistics: `MASTRA_TELEMETRY_DISABLED` is set.
 

@@ -164,7 +164,7 @@ pnpm dev
 
 The API is available on `http://localhost:4111/api` and Mastra Studio, the built-in interface to test the agent, on `http://localhost:4111`. They have no sign-in, so they answer only requests addressed to this machine (`localhost`, `127.0.0.1`), and refuse those sent by a page of another site open in the browser.
 
-The built server (`pnpm start`) serves neither the API nor Studio: only the widget routes and `/health`. The channels call the agent inside the server and never need its API.
+The built server (`pnpm start`) serves neither the API nor Studio: only the widget routes, `/health` and `/ready`. The channels call the agent inside the server and never need its API.
 
 Production build and start:
 
@@ -185,8 +185,10 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
    | `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`                                       | Address of Ollama as the containers reach it, and the key of the proxy in front of it, if any                                          |
    | `WEB_PUBLIC_ORIGIN`, `WEB_TRUST_PROXY`                                    | Address of the interface, such as `https://kira.example.com`, and `true`                                                               |
    | `WIDGET_ALLOWED_ORIGINS`, `WIDGET_IDENTITY_SECRETS`, `WIDGET_TRUST_PROXY` | Origins and secrets of the applications that embed the widget, and `true`                                                              |
+   | `EMAIL_*`                                                                 | The real mailbox, over TLS (see [Connecting email](#connecting-email)), or removed to run without email                                |
+   | `LOCAL_MAIL_*`, `TEST_*`, `POSTGRES_PORT`                                 | Removed: they serve the local mail server, the tests and the local database only                                                       |
 
-   `MASTRA_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file.
+   `MASTRA_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file, which take precedence over `.env`.
 
 2. Build and start everything. The `migrate` service applies the migrations and sets the passwords of the roles; the agent server and the web interface start once it succeeded:
 
@@ -197,7 +199,7 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
 3. Create the first administrator:
 
    ```bash
-   docker compose -f compose.production.yaml run --rm -it web node packages/core/scripts/add-staff.ts --email dana.support@team.example --name "Dana Support" --role admin
+   docker compose -f compose.production.yaml run --rm -it tools node packages/core/scripts/add-staff.ts --email dana.support@team.example --name "Dana Support" --role admin
    ```
 
 4. Put a reverse proxy with HTTPS in front of the two services, which listen on this machine only:
@@ -213,12 +215,18 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
 
 To update, get the new version and run the same `up` command: the migrations run first. The logs are read with `docker compose -f compose.production.yaml logs -f server web`; `LOG_LEVEL` sets their level. Mastra sends no usage statistics: `MASTRA_TELEMETRY_DISABLED` is set.
 
-Daily maintenance, such as from cron, and backups of the database and of the files of the widget:
+The maintenance commands run in the `tools` service, which `docker compose run` starts on demand, with the files of the widget writable. Daily maintenance, such as from cron, and backups of the database and of the files of the widget:
 
 ```bash
-docker compose -f compose.production.yaml run --rm web node packages/core/scripts/purge.ts
+docker compose -f compose.production.yaml run --rm tools node packages/core/scripts/purge.ts
 docker compose -f compose.production.yaml exec -T postgres pg_dump -U request_agent request_agent > kira.sql
-docker run --rm -v kira_attachments:/data:ro -v "$PWD":/backup node:26.12.1-bookworm-slim tar czf /backup/attachments.tgz -C /data .
+docker run --rm -v kira_attachments:/data:ro -v "$PWD":/backup node:26.12.1-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c tar czf /backup/attachments.tgz -C /data .
+```
+
+To erase a person on the server (see [Personal data](#personal-data)):
+
+```bash
+docker compose -f compose.production.yaml run --rm tools node packages/core/scripts/erase-contact.ts --email bruno.leroy@globex.example --confirm
 ```
 
 The agent server and the web interface each run as one container: they keep the queue of messages and the limits of sign-in and of the widget in memory.
@@ -371,7 +379,7 @@ pnpm contact:erase --email bruno.leroy@globex.example
 pnpm contact:erase --email bruno.leroy@globex.example --confirm
 ```
 
-It replaces what the person wrote and the answers they got with "[effacé à la demande de la personne]", empties the original payloads, removes the texts of their requests and the texts kept in their history, deletes their files from `ATTACHMENTS_DIR`, and replaces their name, email and Slack ID. Nothing is deleted from the history: the requests keep their type, status, project and dates. `--slack U012AB3CD` names a Slack person. An account of the team is disabled in the web interface instead.
+It replaces what the person wrote and the answers they got with "[effacé à la demande de la personne]", empties the original payloads, removes the texts of their requests and the texts kept in their history, deletes their files from `ATTACHMENTS_DIR`, and replaces their name, email and Slack ID. A file that cannot be deleted is listed with the reason, to be deleted by hand, and the command ends with an error. Nothing is deleted from the history: the requests keep their type, status, project and dates. `--slack U012AB3CD` names a Slack person. An account of the team is disabled in the web interface instead.
 
 `pnpm db:purge` deletes the sessions of the web interface that ended more than 30 days ago, and empties the original payload of the messages handled more than 365 days ago (`--source-retention-days` changes it). Their text stays. It is meant to run once a day, such as from cron.
 

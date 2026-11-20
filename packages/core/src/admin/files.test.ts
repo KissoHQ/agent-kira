@@ -11,6 +11,7 @@ import { bruno, storeMessage } from "../../test/fixtures.ts";
 import { attachments } from "../db/schema.ts";
 import { seedDatabase } from "../db/seed.ts";
 import {
+  attachmentRetentionDays,
   deleteStoredFiles,
   findOrphanFiles,
   forgetOldFiles,
@@ -114,5 +115,13 @@ describe("stored files", () => {
 
     expect(await findOrphanFiles(getAppDatabase(), folder, now)).toEqual([orphan]);
     expect(await findOrphanFiles(getAppDatabase(), join(folder, "missing"), now)).toEqual([]);
+  });
+
+  it("reads the retention from the setting, 40 days unless set", () => {
+    expect(attachmentRetentionDays.parse(undefined)).toBe(40);
+    expect(attachmentRetentionDays.parse("")).toBe(40);
+    expect(attachmentRetentionDays.parse("90")).toBe(90);
+    expect(attachmentRetentionDays.safeParse("0").success).toBe(false);
+    expect(attachmentRetentionDays.safeParse("quarante").success).toBe(false);
   });
 });

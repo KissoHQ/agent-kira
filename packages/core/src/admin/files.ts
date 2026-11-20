@@ -15,6 +15,14 @@ import { fail, type Result, succeed } from "../requests/views.ts";
 // its name, type, size and date with its message: only its content is gone.
 
 export const defaultAttachmentRetentionDays = 40;
+
+// Days a file is kept, read from ATTACHMENT_RETENTION_DAYS by the purge, which deletes the files,
+// and by the web interface, which tells the team: both read the same setting. An empty value means
+// not set.
+export const attachmentRetentionDays = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.coerce.number().int().min(1).max(36_500).default(defaultAttachmentRetentionDays),
+);
 export const filesPageSize = 50;
 
 // Files are written by the widget under random UUIDs: any other name in the folder is never

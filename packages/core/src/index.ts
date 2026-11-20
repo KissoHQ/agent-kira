@@ -212,6 +212,7 @@ export {
   setContactDisabled,
 } from "./admin/people.ts";
 export {
+  attachmentRetentionDays,
   defaultAttachmentRetentionDays,
   deleteStoredFiles,
   filesPageSize,

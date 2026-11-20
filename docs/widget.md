@@ -10,7 +10,7 @@ The widget has no business logic: it sends what the person writes to the agent s
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | `WIDGET_ALLOWED_ORIGINS`      | Origins of the applications that embed the widget, separated by commas. Without it, the server runs without the widget                                                                                                                                     | `https://portal.example.com`                               |
 | `WIDGET_IDENTITY_SECRETS`     | Optional. One secret per project, `PROJECT=secret` separated by commas, each at least 32 characters and given only to the application of that project, to sign the identity of the person signed in. A project without a secret has only unverified people | `PORTAL=` followed by the output of `openssl rand -hex 32` |
-| `ATTACHMENTS_DIR`             | Absolute path of the folder where the files people attach are written. The web interface of the team reads the same folder to download them                                                                                                                | `/var/lib/request-agent/attachments`                       |
+| `ATTACHMENTS_DIR`             | Absolute path of the folder where the files people attach are written. The web interface of the team uses the same folder to download and delete them                                                                                                      | `/var/lib/request-agent/attachments`                       |
 | `WIDGET_ATTACHMENTS_QUOTA_MB` | Optional. Most space the attached files may take, in megabytes. Beyond, files are refused and messages without files are still taken                                                                                                                       | `2048` (default)                                           |
 | `WIDGET_TRUST_PROXY`          | Optional. `true` only behind a reverse proxy that adds the address of the person to `X-Forwarded-For`, so the limits below count people and not the proxy                                                                                                  | `false` (default)                                          |
 | `WIDGET_HOST`, `WIDGET_PORT`  | Optional. Address and port the widget listens on, apart from the Mastra server. Only this machine by default; `0.0.0.0` in a container                                                                                                                     | `127.0.0.1` and `4113` (default)                           |
@@ -92,14 +92,14 @@ The token is the only key to a conversation: the widget keeps it in the storage 
 
 The routes are public, so each network address gets a share of the server. An IPv6 client is counted by its `/64` network, which one person usually holds whole, and an IPv4 address written as IPv6 as the IPv4 address:
 
-| Limit                                         | Value                                  | Answer beyond it                                                |
-| --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------- |
-| Messages sent by one address                  | 10 every 10 minutes                    | `429`, with `Retry-After`                                       |
-| Messages of one address waiting for the agent | 3                                      | `429`: "Vos messages précédents sont en cours de traitement…"   |
-| Messages waiting for the agent, in total      | 20                                     | `503`: "Le service reçoit beaucoup de demandes…"                |
-| Messages read in their files at the same time | 4, then 50 waiting                     | `503`                                                           |
-| Reads of conversations by one address         | 300 every 5 minutes (one every second) | `429`, with `Retry-After`                                       |
-| Space taken by the files                      | `WIDGET_ATTACHMENTS_QUOTA_MB`          | `503`: "Les fichiers ne peuvent pas être reçus pour le moment…" |
+| Limit                                         | Value                                                                             | Answer beyond it                                                |
+| --------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Messages sent by one address                  | 10 every 10 minutes                                                               | `429`, with `Retry-After`                                       |
+| Messages of one address waiting for the agent | 3                                                                                 | `429`: "Vos messages précédents sont en cours de traitement…"   |
+| Messages waiting for the agent, in total      | 20                                                                                | `503`: "Le service reçoit beaucoup de demandes…"                |
+| Messages read in their files at the same time | 4, then 50 waiting                                                                | `503`                                                           |
+| Reads of conversations by one address         | 300 every 5 minutes (one every second)                                            | `429`, with `Retry-After`                                       |
+| Space taken by the files                      | `WIDGET_ATTACHMENTS_QUOTA_MB`, files deleted after 40 days or by an administrator | `503`: "Les fichiers ne peuvent pas être reçus pour le moment…" |
 
 These counts are kept in memory: the server runs as one process.
 

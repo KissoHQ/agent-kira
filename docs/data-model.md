@@ -116,7 +116,7 @@ A message is stored only once for a given channel and external ID, so an email p
 
 ### `attachments`
 
-Files attached to a message: `filename`, `content_type`, `size_bytes`, and `storage_ref`, the name of the stored file in `ATTACHMENTS_DIR`, empty when only the metadata is kept. The widget stores the files it receives, under random names; email attachments are only described.
+Files attached to a message: `filename`, `content_type`, `size_bytes`, and `storage_ref`, the name of the stored file in `ATTACHMENTS_DIR`, empty when only the metadata is kept. The widget stores the files it receives, under random names; email attachments are only described. A stored file is deleted 40 days after it was received by the daily purge, or earlier by an administrator: its row stays, with an empty `storage_ref`.
 
 ### `requests`
 

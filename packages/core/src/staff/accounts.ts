@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database, Transaction } from "../db/client.ts";
+import { isUniqueViolation } from "../db/errors.ts";
 import { contacts, staffAccounts, staffRole } from "../db/schema.ts";
 import { fail, type Result, succeed } from "../requests/views.ts";
 import { hashPassword, verifyPassword } from "./password.ts";
@@ -63,6 +64,75 @@ export async function saveStaffAccount(db: Database, input: StaffAccountInput): 
     await closeSessionsOf(tx, contact.id);
     return contact.id;
   });
+}
+
+// Creates the account of a new team member from the web interface. Nothing existing is changed: an
+// email that is already a member, or already a contact of a client, is refused, so an account can
+// neither overwrite another one nor turn a person of a client into a member who sees every request.
+export async function createStaffAccount(
+  db: Database,
+  input: StaffAccountInput,
+): Promise<Result<string, "IDENTITY_TAKEN" | "CLIENT_CONTACT">> {
+  const passwordHash = await hashPassword(input.password);
+  return db.transaction(async (tx) => {
+    const [contact] = await tx
+      .insert(contacts)
+      .values({ email: input.email, name: input.name })
+      .onConflictDoNothing({ target: contacts.email })
+      .returning({ id: contacts.id });
+    if (contact === undefined) {
+      const [existing] = await tx
+        .select({ staff: staffAccounts.contactId })
+        .from(contacts)
+        .leftJoin(staffAccounts, eq(staffAccounts.contactId, contacts.id))
+        .where(eq(contacts.email, input.email));
+      return fail(existing?.staff === null ? "CLIENT_CONTACT" : "IDENTITY_TAKEN");
+    }
+    await tx
+      .insert(staffAccounts)
+      .values({ contactId: contact.id, passwordHash, role: input.role ?? "MEMBER" });
+    return succeed(contact.id);
+  });
+}
+
+export const staffIdentityInput = z.object({
+  email: z.email().max(254).toLowerCase(),
+  name: z.string().trim().min(1).max(120),
+});
+
+// Changes the name and the sign-in email of a team member. A new email ends their sessions, so a
+// session opened under the old email does not go on.
+export async function setStaffIdentity(
+  db: Database,
+  contactId: string,
+  input: z.infer<typeof staffIdentityInput>,
+): Promise<Result<null, "NOT_FOUND" | "IDENTITY_TAKEN">> {
+  try {
+    return await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({ email: contacts.email })
+        .from(staffAccounts)
+        .innerJoin(contacts, eq(contacts.id, staffAccounts.contactId))
+        .where(eq(staffAccounts.contactId, contactId))
+        .for("update");
+      if (current === undefined) {
+        return fail("NOT_FOUND");
+      }
+      await tx
+        .update(contacts)
+        .set({ email: input.email, name: input.name })
+        .where(eq(contacts.id, contactId));
+      if (current.email !== input.email) {
+        await closeSessionsOf(tx, contactId);
+      }
+      return succeed(null);
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return fail("IDENTITY_TAKEN");
+    }
+    throw error;
+  }
 }
 
 // The team member with this email and password, if their account is enabled.

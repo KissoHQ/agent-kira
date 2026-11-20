@@ -2,13 +2,17 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { useAppTestDatabase, useTestDatabase } from "../../test/database.ts";
+import { alice } from "../../test/fixtures.ts";
 import { contacts, staffAccounts } from "../db/schema.ts";
+import { seedDatabase } from "../db/seed.ts";
 import {
   authenticateStaff,
   changeOwnPassword,
+  createStaffAccount,
   listStaff,
   saveStaffAccount,
   setStaffDisabled,
+  setStaffIdentity,
   setStaffPassword,
   setStaffRole,
   staffAccountInput,
@@ -215,5 +219,97 @@ describe("administration of the accounts", () => {
     await expect(
       authenticateStaff(getAppDatabase(), member.email, "a new long password"),
     ).resolves.toBeDefined();
+  });
+});
+
+describe("createStaffAccount", () => {
+  const newMember = staffAccountInput.parse({
+    email: "eve.support@team.example",
+    name: "Eve Support",
+    password,
+  });
+
+  it("creates a new member, and refuses an email that is already a member", async () => {
+    const created = await createStaffAccount(getAppDatabase(), newMember);
+
+    expect(created.ok).toBe(true);
+    expect(await createStaffAccount(getAppDatabase(), newMember)).toEqual({
+      ok: false,
+      error: "IDENTITY_TAKEN",
+    });
+    expect(
+      await createStaffAccount(getAppDatabase(), {
+        ...newMember,
+        email: "dana.support@team.example",
+      }),
+    ).toEqual({ ok: false, error: "IDENTITY_TAKEN" });
+    await expect(
+      authenticateStaff(getAppDatabase(), account.email, password),
+    ).resolves.toMatchObject({ contactId });
+  });
+
+  it("creates one account when two administrators add the same email at once", async () => {
+    const results = await Promise.all([
+      createStaffAccount(getAppDatabase(), newMember),
+      createStaffAccount(getAppDatabase(), { ...newMember, password: "another long password" }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)).toEqual([
+      { ok: false, error: "IDENTITY_TAKEN" },
+    ]);
+  });
+
+  it("never turns a person of a client into a member of the team", async () => {
+    await seedDatabase(getDatabase());
+
+    expect(await createStaffAccount(getAppDatabase(), { ...newMember, email: alice })).toEqual({
+      ok: false,
+      error: "CLIENT_CONTACT",
+    });
+    expect((await listStaff(getAppDatabase())).map((row) => row.email)).not.toContain(alice);
+  });
+});
+
+describe("setStaffIdentity", () => {
+  it("changes the sign-in email, which ends the sessions opened under the old one", async () => {
+    const { token } = await openSession(getAppDatabase(), contactId);
+
+    expect(
+      await setStaffIdentity(getAppDatabase(), contactId, {
+        email: "dana@team.example",
+        name: "Dana S.",
+      }),
+    ).toEqual({ ok: true, value: null });
+
+    await expect(findSession(getAppDatabase(), token)).resolves.toBeUndefined();
+    await expect(
+      authenticateStaff(getAppDatabase(), "dana@team.example", password),
+    ).resolves.toMatchObject({ contactId, name: "Dana S." });
+  });
+
+  it("keeps the sessions when only the name changes", async () => {
+    const { token } = await openSession(getAppDatabase(), contactId);
+
+    await setStaffIdentity(getAppDatabase(), contactId, {
+      email: "dana.support@team.example",
+      name: "Dana",
+    });
+
+    await expect(findSession(getAppDatabase(), token)).resolves.toBeDefined();
+  });
+
+  it("refuses an email already used and an account that does not exist", async () => {
+    await seedDatabase(getDatabase());
+
+    expect(
+      await setStaffIdentity(getAppDatabase(), contactId, { email: alice, name: "Dana" }),
+    ).toEqual({ ok: false, error: "IDENTITY_TAKEN" });
+    expect(
+      await setStaffIdentity(getAppDatabase(), "00000000-0000-4000-8000-000000000000", {
+        email: "x@team.example",
+        name: "X",
+      }),
+    ).toEqual({ ok: false, error: "NOT_FOUND" });
   });
 });

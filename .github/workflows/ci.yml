@@ -1,5 +1,6 @@
 # Checks every pull request and every push to main: lint, types, format, tests against a real
-# database and mail server, the audit of the dependencies, and the build of the agent server.
+# database and mail server, the audit of the dependencies, the build of the agent server, and the
+# build of the two images of the deployment, which are not pushed anywhere.
 # Actions are pinned by the commit of their release, so a moved tag cannot change what runs.
 name: CI
 
@@ -72,3 +73,7 @@ jobs:
         run: pnpm audit
       - name: Build of the agent server
         run: pnpm build
+      - name: Build of the agent server image
+        run: docker build --target server --tag kira-server:ci .
+      - name: Build of the web interface image
+        run: docker build --target web --tag kira-web:ci .

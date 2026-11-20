@@ -213,6 +213,7 @@ function actions(record: RequestRecord, projects: { key: string; name: string }[
     <section class="card">
       <h2>Marquer comme doublon</h2>
       <form method="post" action="/requests/${record.reference}/duplicate">
+        <input type="hidden" name="version" value="${record.updatedAt}" />
         <label>
           Demande d'origine
           <input

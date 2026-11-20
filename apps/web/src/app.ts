@@ -117,7 +117,7 @@ const duplicateErrors = {
   NOT_FOUND: "Demande d'origine introuvable.",
   SAME_REQUEST: "Une demande ne peut pas être le doublon d'elle-même.",
   ORIGINAL_IS_DUPLICATE:
-    "Cette demande est elle-même un doublon fermé : indiquez la demande d'origine qu'elle désigne.",
+    "Cette demande est elle-même un doublon : indiquez la demande d'origine qu'elle désigne.",
 } as const;
 
 // Files are written by the widget under random UUIDs, so a stored name is never a path.
@@ -429,13 +429,16 @@ export function createWebApp(options: WebAppOptions) {
     const input = markDuplicateInput.safeParse({
       reference: c.req.param("reference"),
       duplicateOf: formValue(form, "duplicateOf")?.trim().toUpperCase(),
+      version: formValue(form, "version"),
     });
     if (!input.success) {
       return showRequest(c, { error: "Référence invalide : écrivez par exemple REQ-0042." }, 400);
     }
     const result = await markDuplicate(db, { contactId: c.get("staff").contactId }, input.data);
     if (!result.ok) {
-      return showRequest(c, { error: duplicateErrors[result.error] }, 400);
+      return result.error === "CHANGED"
+        ? showRequest(c, { error: changedMeanwhile }, 409)
+        : showRequest(c, { error: duplicateErrors[result.error] }, 400);
     }
     return done(c, result.value.reference, "duplicate");
   });

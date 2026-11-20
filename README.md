@@ -381,9 +381,9 @@ pnpm contact:erase --email bruno.leroy@globex.example
 pnpm contact:erase --email bruno.leroy@globex.example --confirm
 ```
 
-It replaces what the person wrote and the answers they got with "[effacé à la demande de la personne]", empties the original payloads, removes the texts of their requests and the texts kept in their history, deletes their files from `ATTACHMENTS_DIR`, and replaces their name, email and Slack ID. A file that cannot be deleted is listed with the reason, to be deleted by hand, and the command ends with an error. Nothing is deleted from the history: the requests keep their type, status, project and dates. `--slack U012AB3CD` names a Slack person. An account of the team is disabled in the web interface instead.
+It replaces what the person wrote and the answers they got with "[effacé à la demande de la personne]", empties the original payloads of their conversations, including the emails of others that may quote them, removes the texts of their requests and the texts kept in their history, deletes their files from `ATTACHMENTS_DIR`, and replaces their name, email and Slack ID. A message of the person still waiting for the agent is closed: the agent neither files nor answers it. A file that cannot be deleted is listed with the reason, to be deleted by hand, and the command ends with an error. Nothing is deleted from the history: the requests keep their type, status, project and dates. `--slack U012AB3CD` names a Slack person. An account of the team is disabled in the web interface instead.
 
-`pnpm db:purge` deletes the sessions of the web interface that ended more than 30 days ago, and empties the original payload of the messages handled more than 365 days ago (`--source-retention-days` changes it). Their text stays. It is meant to run once a day, such as from cron.
+`pnpm db:purge` deletes the sessions of the web interface that ended more than 30 days ago, and empties the original payload of the messages handled, and of the answers sent, more than 365 days ago (`--source-retention-days` changes it). Their text stays. It is meant to run once a day, such as from cron.
 
 ## Tests and code quality
 

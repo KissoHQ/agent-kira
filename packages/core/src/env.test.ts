@@ -56,6 +56,10 @@ describe("loadClassifierEnv", () => {
 
   it("uses the measured review threshold by default", () => {
     expect(loadClassifierEnv(ollama).CLASSIFICATION_REVIEW_THRESHOLD).toBe(0.8);
+    expect(
+      loadClassifierEnv({ ...ollama, CLASSIFICATION_REVIEW_THRESHOLD: "" })
+        .CLASSIFICATION_REVIEW_THRESHOLD,
+    ).toBe(0.8);
   });
 
   it("reads a threshold between 0 and 1", () => {

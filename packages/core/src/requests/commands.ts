@@ -29,15 +29,25 @@ import {
   toRequestView,
 } from "./views.ts";
 
-// Locks the message being handled, so two attempts to handle it cannot both file a request.
+// Locks the message being handled, so two attempts to handle it cannot both file a request. A
+// message closed meanwhile, such as one erased at the request of its sender while the agent read
+// it, is refused: the agent must not write its text into a request again.
 async function lockTurnMessage(tx: Transaction, turn: Turn) {
   const [message] = await tx
-    .select({ id: messages.id, channel: messages.channel, requestId: messages.requestId })
+    .select({
+      id: messages.id,
+      channel: messages.channel,
+      requestId: messages.requestId,
+      handledAt: messages.handledAt,
+    })
     .from(messages)
     .where(eq(messages.id, turn.messageId))
     .for("update");
   if (message === undefined) {
     throw new Error(`Message ${turn.messageId} must be stored before the agent handles it`);
+  }
+  if (message.handledAt !== null) {
+    throw new Error(`Message ${turn.messageId} was closed while the agent handled it`);
   }
   return message;
 }

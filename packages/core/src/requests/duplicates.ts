@@ -16,7 +16,8 @@ export const maxDuplicateCandidates = 8;
 // Statuses of a request that a new message about the same problem can still join.
 export const openStatuses = ["NEW", "IN_PROGRESS", "WAITING_FOR_INFO"] as const;
 
-// Open requests of the message's project that the sender can reach, most similar first. Without an
+// Open requests of the message's project that the sender can reach, most similar first, and never
+// one that is itself a duplicate, so a new duplicate always points to an original. Without an
 // identified project there is nothing to compare with, and an unverified sender reaches nothing,
 // so the existence of other requests is never revealed.
 export async function findDuplicateCandidates(
@@ -42,6 +43,7 @@ export async function findDuplicateCandidates(
           sql`, `,
         )})
         and ${visibleRequests(turn.actor)}
+        and ${requests.duplicateOfRequestId} is null
         and not exists (
           select 1 from messages m where m.id = ${turn.messageId} and m.request_id = ${requests.id}
         )

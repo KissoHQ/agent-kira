@@ -154,6 +154,9 @@ describe("loadWidgetEnv", () => {
     expect(
       loadWidgetEnv({ ...widget, WIDGET_ATTACHMENTS_QUOTA_MB: "500" })?.WIDGET_ATTACHMENTS_QUOTA_MB,
     ).toBe(500);
+    expect(
+      loadWidgetEnv({ ...widget, WIDGET_ATTACHMENTS_QUOTA_MB: "" })?.WIDGET_ATTACHMENTS_QUOTA_MB,
+    ).toBe(2048);
     expect(() => loadWidgetEnv({ ...widget, WIDGET_ATTACHMENTS_QUOTA_MB: "0" })).toThrow(
       /WIDGET_ATTACHMENTS_QUOTA_MB/,
     );

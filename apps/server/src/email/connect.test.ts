@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { MailboxCursor } from "@request-agent/core";
 
 import { ImapFlow } from "imapflow";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { type CursorStore, type MailServerSettings, imapMailbox, smtpSender } from "./connect";
@@ -228,5 +228,37 @@ describe("imapMailbox, while the mail server is unreachable", { timeout: 20_000 
       "The mailbox could not be opened, attempt 2",
       "The mailbox could not be opened, attempt 3",
     ]);
+  });
+
+  it("closes each connection whose opening failed, so none stays open on the mail server", async () => {
+    const close = vi.spyOn(ImapFlow.prototype, "close");
+    const store = memoryCursorStore();
+    let failures = 2;
+    // The database is down for the first two openings: the place reached cannot be read.
+    const failingStore: CursorStore = {
+      load: () =>
+        failures-- > 0 ? Promise.reject(new Error("Connection terminated")) : store.load(),
+      save: (cursor) => store.save(cursor),
+    };
+    const errors: string[] = [];
+    const mailbox = imapMailbox(
+      settings,
+      { error: (message) => errors.push(message) },
+      failingStore,
+      [20],
+    );
+
+    try {
+      await mailbox.watch(() => Promise.resolve());
+
+      expect(errors).toEqual([
+        "The mailbox could not be opened, attempt 1",
+        "The mailbox could not be opened, attempt 2",
+      ]);
+      expect(close).toHaveBeenCalledTimes(2);
+    } finally {
+      await mailbox.close();
+      close.mockRestore();
+    }
   });
 });

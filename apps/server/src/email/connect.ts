@@ -138,17 +138,29 @@ export function imapMailbox(
           });
         });
         current.on("close", () => {
-          if (closed) {
+          // Only the connection in use opens a new one: a connection given up below does not.
+          if (closed || client !== current) {
             return;
           }
           setTimeout(() => {
             void open();
           }, reconnectDelayMs);
         });
-        await current.connect();
-        await current.mailboxOpen("INBOX");
-        client = current;
-        await readNew(current);
+        try {
+          await current.connect();
+          await current.mailboxOpen("INBOX");
+          client = current;
+          await readNew(current);
+        } catch (error) {
+          // The next attempt opens a new connection: this one is closed first, so failed attempts,
+          // such as while the database is down, do not leave connections open on the mail server.
+          if (client === current) {
+            client = undefined;
+          }
+          current.removeAllListeners("exists");
+          current.close();
+          throw error;
+        }
       };
       await open();
     },

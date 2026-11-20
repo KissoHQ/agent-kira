@@ -1,12 +1,25 @@
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
+  attachments,
   listChannelLinks,
   listContactRows,
   listOrganizations,
   listProjectRows,
   listStaff,
+  listStoredFiles,
   saveStaffAccount,
 } from "@request-agent/core";
-import { seedDatabase, useAppTestDatabase, useTestDatabase } from "@request-agent/core/testing";
+import {
+  bruno,
+  seedDatabase,
+  storeMessage,
+  useAppTestDatabase,
+  useTestDatabase,
+} from "@request-agent/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createWebApp } from "./app.ts";
@@ -383,5 +396,44 @@ describe("own account", () => {
     expect((await post("/login", { email: member, password: "a brand new password" })).status).toBe(
       303,
     );
+  });
+});
+
+describe("files", () => {
+  it("lets an administrator delete a file to free its space, and keeps its name", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "admin-files-"));
+    const storageRef = randomUUID();
+    await writeFile(join(folder, storageRef), "image");
+    const messageId = await storeMessage(getDatabase(), { sender: bruno, bodyText: "Capture" });
+    const [file] = await getDatabase()
+      .insert(attachments)
+      .values({
+        messageId,
+        filename: "capture.png",
+        contentType: "image/png",
+        sizeBytes: 5,
+        storageRef,
+      })
+      .returning({ id: attachments.id });
+    app = createWebApp({ db: getAppDatabase(), timeZone: "Europe/Paris", attachmentsDir: folder });
+    const cookie = await signIn(admin);
+
+    const listed = await (await get("/admin/files", cookie)).text();
+    const deleted = await post(`/admin/files/${file?.id}/delete`, {}, cookie);
+    const again = await post(`/admin/files/${file?.id}/delete`, {}, cookie);
+
+    expect(listed).toContain("capture.png");
+    expect(listed).toContain("1 fichiers joints gardés sur le serveur");
+    expect(deleted.headers.get("location")).toBe("/admin/files?done=deleted");
+    expect(again.status).toBe(404);
+    expect(await readdir(folder)).toEqual([]);
+    expect((await listStoredFiles(getAppDatabase(), 1)).total).toBe(0);
+    expect((await get(`/attachments/${file?.id}`, cookie)).status).toBe(404);
+  });
+
+  it("is refused to a member", async () => {
+    const cookie = await signIn(member);
+
+    expect((await get("/admin/files", cookie)).status).toBe(403);
   });
 });

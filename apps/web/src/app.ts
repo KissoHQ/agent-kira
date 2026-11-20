@@ -470,7 +470,15 @@ export function createWebApp(options: WebAppOptions) {
     return done(c, input.data.reference.toUpperCase(), "status");
   });
 
-  registerAdministration(app, { db, view, render, audit, passwordChecks, emailLimiter });
+  registerAdministration(app, {
+    db,
+    view,
+    render,
+    audit,
+    passwordChecks,
+    emailLimiter,
+    attachmentsDir: options.attachmentsDir,
+  });
 
   app.notFound((c) => c.text("Not found", 404));
   app.onError((error, c) => {

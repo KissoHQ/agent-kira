@@ -8,6 +8,7 @@ import {
   markHandled,
   markReplySent,
   recordFailedAttempt,
+  requestReferenceOf,
 } from "./handling.ts";
 
 useTestDatabase();
@@ -90,5 +91,11 @@ describe("message handling", () => {
     expect(pending?.reply).toBe("Première réponse");
     // The caller knows the second answer was not kept, so it does not send it.
     expect([first, second]).toEqual([true, false]);
+  });
+
+  it("gives the reference of the request a message is filed under, and none otherwise", async () => {
+    const stored = await storeInboundMessage(getAppDatabase(), message("<2@acme.example>"));
+
+    expect(await requestReferenceOf(getAppDatabase(), stored.messageId)).toBeUndefined();
   });
 });

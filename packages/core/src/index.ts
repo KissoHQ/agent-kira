@@ -115,6 +115,7 @@ export {
   type PendingReply,
   maxHandlingAttempts,
   recordFailedAttempt,
+  requestReferenceOf,
   type UnhandledMessage,
 } from "./messages/handling.ts";
 export {

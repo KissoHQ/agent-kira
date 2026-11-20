@@ -1,7 +1,8 @@
 import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "../db/client.ts";
-import { conversations, messages } from "../db/schema.ts";
+import { conversations, messages, requests } from "../db/schema.ts";
+import { formatReference } from "../requests/reference.ts";
 
 type Channel = (typeof messages.$inferSelect)["channel"];
 
@@ -32,6 +33,20 @@ export async function markHandled(
     .where(and(eq(messages.id, messageId), isNull(messages.handledAt)))
     .returning({ id: messages.id });
   return marked.length > 0;
+}
+
+// The reference of the request a message is filed under, as recorded by the system, or undefined.
+// Unlike a reference in a text, it cannot name a request the sender did not make.
+export async function requestReferenceOf(
+  db: Database,
+  messageId: string,
+): Promise<string | undefined> {
+  const [row] = await db
+    .select({ number: requests.number })
+    .from(messages)
+    .innerJoin(requests, eq(requests.id, messages.requestId))
+    .where(eq(messages.id, messageId));
+  return row === undefined ? undefined : formatReference(row.number);
 }
 
 // The channel sent the answer to the message, or decided not to send it: it is no longer pending.

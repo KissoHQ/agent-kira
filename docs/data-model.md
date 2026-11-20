@@ -180,7 +180,7 @@ A signed-in session of the web interface.
 | `revoked_at`   | When the person signed out, or when all their sessions were ended       |
 | `last_seen_at` | Last use of the session. A session not used for 1 hour ends             |
 
-Rows are never deleted, since the application role cannot delete: a session that signed out is marked as revoked.
+The web interface never deletes a row: a session that signed out is marked as revoked. The daily purge (`pnpm db:purge`), run as the owner, deletes the sessions that ended more than 30 days ago.
 
 ### `mailbox_cursors`
 

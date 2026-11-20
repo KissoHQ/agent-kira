@@ -61,12 +61,25 @@ try {
       process.exitCode = 1;
     } else {
       const folder = attachmentsDir ?? "";
-      await Promise.all(
-        erasure.storageRefs
-          .filter((ref) => storageRef.safeParse(ref).success)
-          .map((ref) => rm(join(folder, ref), { force: true })),
+      const refs = erasure.storageRefs.filter((ref) => storageRef.safeParse(ref).success);
+      // Every file is tried: one that cannot be deleted, such as on a read-only folder, is listed
+      // to be deleted by hand, and the others are deleted anyway.
+      const removals = await Promise.allSettled(
+        refs.map((ref) => rm(join(folder, ref), { force: true })),
       );
-      console.info("Erased.");
+      const left = refs.flatMap((ref, index) => {
+        const removal = removals[index];
+        return removal?.status === "rejected"
+          ? [`${join(folder, ref)}: ${String(removal.reason)}`]
+          : [];
+      });
+      if (left.length > 0) {
+        console.error("The database is erased, but these files could not be deleted:");
+        console.error(left.join("\n"));
+        process.exitCode = 1;
+      } else {
+        console.info("Erased.");
+      }
     }
   }
 } finally {

@@ -2,7 +2,8 @@
 #   docker build --target server -t kira-server .
 #   docker build --target web -t kira-web .
 # The web image also runs the migrations (see compose.production.yaml). Both run as the unprivileged
-# node user, on the Node.js version the project requires, pinned by digest.
+# node user, on the Node.js version the project requires, pinned by digest. The code belongs to root
+# and is only readable by node, so a compromised process cannot rewrite it.
 
 FROM node:26.12.1-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c AS node
 
@@ -29,7 +30,7 @@ ENV NODE_ENV=production \
     PORT=4111 \
     MASTRA_TELEMETRY_DISABLED=1
 WORKDIR /app
-COPY --from=server-build --chown=node:node /app/apps/server/.mastra/output ./
+COPY --from=server-build /app/apps/server/.mastra/output ./
 # Owned by node, so a volume mounted here starts writable by the server.
 RUN mkdir -p /data/attachments && chown node:node /data/attachments
 USER node
@@ -51,7 +52,7 @@ ENV NODE_ENV=production \
     WEB_HOST=0.0.0.0 \
     WEB_PORT=4112
 WORKDIR /app
-COPY --from=web-build --chown=node:node /app ./
+COPY --from=web-build /app ./
 USER node
 EXPOSE 4112
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

@@ -16,6 +16,14 @@ describe("loadWebEnv", () => {
     });
   });
 
+  it("reads an empty address or port as not set", () => {
+    expect(loadWebEnv({ ...required, WEB_HOST: "", WEB_PORT: "" })).toMatchObject({
+      WEB_HOST: "127.0.0.1",
+      WEB_PORT: 4112,
+    });
+    expect(loadWebEnv({ ...required, WEB_PORT: "8080" }).WEB_PORT).toBe(8080);
+  });
+
   it("reads the public origin of the interface, and refuses one with a path", () => {
     expect(
       loadWebEnv({ ...required, WEB_PUBLIC_ORIGIN: "https://kira.example.com" }).WEB_PUBLIC_ORIGIN,

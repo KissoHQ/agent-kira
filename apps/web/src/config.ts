@@ -14,8 +14,14 @@ function isTimeZone(zone: string): boolean {
 
 const webEnvSchema = z.object({
   // Only this machine by default: set 0.0.0.0 to open the interface to the network, behind HTTPS.
-  WEB_HOST: z.string().min(1).default("127.0.0.1"),
-  WEB_PORT: z.coerce.number().int().min(1).max(65_535).default(4112),
+  WEB_HOST: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).default("127.0.0.1"),
+  ),
+  WEB_PORT: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().int().min(1).max(65_535).default(4112),
+  ),
   // Folder where the widget writes the files people attach, the same as for the agent server.
   // Optional: without it, the files are listed but cannot be downloaded.
   ATTACHMENTS_DIR: z.preprocess(

@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "../db/client.ts";
@@ -75,6 +75,7 @@ export async function erasePerson(
       return fail("STAFF_ACCOUNT");
     }
 
+    // Locked, so an agent handling one of them waits for the erasure, then finds it closed.
     const written = await tx
       .select({
         id: messages.id,
@@ -89,7 +90,8 @@ export async function erasePerson(
             ? eq(messages.sender, identity)
             : or(eq(messages.sender, identity), eq(messages.authorContactId, contact.id)),
         ),
-      );
+      )
+      .for("update");
     const writtenIds = written.map((row) => row.id);
     const answers =
       written.length === 0
@@ -164,13 +166,32 @@ export async function erasePerson(
         .where(inArray(messages.id, textMessages));
     }
     if (writtenIds.length > 0) {
-      await tx.update(messages).set({ sender: "erased" }).where(inArray(messages.id, writtenIds));
+      // A message not handled yet is closed: the agent no longer handles it nor answers it.
+      await tx
+        .update(messages)
+        .set({ sender: "erased", handledAt: sql`coalesce(${messages.handledAt}, now())` })
+        .where(inArray(messages.id, writtenIds));
     }
     if (written.length > 0) {
+      const conversationIds = [...new Set(written.map((row) => row.conversationId))];
       await tx
         .update(conversations)
         .set({ subject: null })
-        .where(inArray(conversations.id, [...new Set(written.map((row) => row.conversationId))]));
+        .where(inArray(conversations.id, conversationIds));
+      // The original payloads of the other messages of these conversations, such as an email of a
+      // colleague that quotes the person, are emptied too. Their text stays, as written by their
+      // own author. A message still to handle or to answer keeps the payload it needs.
+      await tx
+        .update(messages)
+        .set({ raw: {} })
+        .where(
+          and(
+            inArray(messages.conversationId, conversationIds),
+            or(eq(messages.direction, "OUTBOUND"), isNotNull(messages.handledAt)),
+            isNull(messages.pendingReply),
+            ne(messages.raw, {}),
+          ),
+        );
     }
     if (files.length > 0) {
       await tx.delete(attachments).where(
@@ -222,8 +243,9 @@ export interface Purge {
 }
 
 // Keeps no data longer than the system needs it: sessions of the web interface that ended more
-// than a month ago, and the original payload of messages handled and answered long ago. Their text
-// stays, so the requests keep their messages.
+// than a month ago, and the original payload of messages handled and answered long ago, and of the
+// answers sent long ago, which name their recipient. Their text stays, so the requests keep their
+// messages.
 export async function purgeOldData(
   ownerDb: Database,
   options: { sourceRetentionDays: number; now?: Date },
@@ -240,7 +262,7 @@ export async function purgeOldData(
       .set({ raw: {} })
       .where(
         and(
-          isNotNull(messages.handledAt),
+          or(eq(messages.direction, "OUTBOUND"), isNotNull(messages.handledAt)),
           sql`${messages.pendingReply} is null`,
           sql`${messages.receivedAt} < ${sourceLimit}`,
           sql`${messages.raw} <> '{}'::jsonb`,

@@ -14,6 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hono/node-server": "catalog:",
     "@mastra/core": "catalog:",
     "@request-agent/core": "workspace:*",
     "@slack/socket-mode": "catalog:",

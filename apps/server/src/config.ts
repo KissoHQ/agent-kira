@@ -10,8 +10,8 @@ const envSchema = z.object({
   // Level of the logs of the server: info by default, so the start of each channel is shown, even
   // when Mastra runs in production mode.
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  // Address the server listens on. Only this machine by default: a reverse proxy or a container
-  // that publishes the widget sets it to 0.0.0.0.
+  // Address the Mastra server listens on, for /health and /ready. Only this machine by default: a
+  // container sets it to 0.0.0.0, so its published port reaches it.
   MASTRA_HOST: z.preprocess(
     (value) => (value === "" ? undefined : value),
     z.string().min(1).default("127.0.0.1"),
@@ -119,6 +119,17 @@ const widgetEnvSchema = z.object({
     z.string().transform(parseIdentitySecrets),
   ),
   ATTACHMENTS_DIR: z.string().refine(isAbsolute, { message: "Must be an absolute path" }),
+  // The widget listens apart from the Mastra server, so it sees the address of each person and
+  // reads no request body before its own limits. Only this machine by default: a reverse proxy
+  // serves it over HTTPS, and a container sets the address to 0.0.0.0.
+  WIDGET_HOST: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).default("127.0.0.1"),
+  ),
+  WIDGET_PORT: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().int().min(1).max(65_535).default(4113),
+  ),
   // Set to true only behind a reverse proxy that adds the address of the person to X-Forwarded-For,
   // so the limits of the widget count people and not the proxy.
   WIDGET_TRUST_PROXY: z.stringbool().default(false),

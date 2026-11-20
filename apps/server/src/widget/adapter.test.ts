@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,7 @@ import {
   events,
   messages,
   requests,
+  type Database,
   storeInboundMessage,
   type TurnInput,
 } from "@request-agent/core";
@@ -19,9 +20,10 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { HandledMessage } from "../mastra/agents/handle-message";
-import { conversationLifetimeMs, createWidgetApp } from "./adapter";
+import { conversationLifetimeMs, createWidgetApp, quotaRecountIntervalMs } from "./adapter";
 import { maxWaitingMessages, maxWaitingPerAddress, messageRate } from "./admission";
 import { signIdentity } from "./identity";
+import { listenForWidget } from "./start";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useServerTestDatabase();
@@ -38,11 +40,14 @@ beforeEach(async () => {
 async function widgetFor(
   handle?: (input: TurnInput) => Promise<HandledMessage>,
   attachmentsQuotaBytes = 1024 * 1024 * 1024,
+  more: { db?: Database; now?: () => Date } = {},
 ) {
   const inputs: TurnInput[] = [];
   const folder = await mkdtemp(join(tmpdir(), "widget-"));
   const widget = await createWidgetApp({
-    db: getAppDatabase(),
+    db: more.db ?? getAppDatabase(),
+    now: more.now,
+    unrecordedRetryDelayMs: 0,
     handle:
       handle ??
       ((input) => {
@@ -68,6 +73,23 @@ function newMessage(fields: Record<string, string>, files: File[] = []) {
     form.append("files", file);
   }
   return { method: "POST", body: form, headers: { origin: portal } };
+}
+
+// The database of the agent server, whose given method fails while `down` says so, as when the
+// connection is lost.
+function failingWhen(method: "transaction" | "update", down: () => boolean): Database {
+  const db = getAppDatabase();
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === method && down()) {
+        return () => {
+          throw new Error("Connection terminated");
+        };
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 // Where a request comes from, as the Node.js server gives it to the app.
@@ -515,5 +537,118 @@ describe("the widget channel", () => {
       .from(messages)
       .orderBy(messages.receivedAt);
     expect(stored.map((row) => row.direction)).toEqual(["INBOUND", "OUTBOUND"]);
+  });
+
+  it("gives back the room of files deleted meanwhile, once the folder is measured again", async () => {
+    let time = new Date("2026-11-20T10:00:00Z").getTime();
+    const widget = await widgetFor(undefined, png.length, { now: () => new Date(time) });
+    const withFile = () =>
+      widget.app.request(
+        "/widget/messages",
+        newMessage({ kind: "BUG", text: "Capture", ...signed() }, [new File([png], "a.png")]),
+        fromAddress("203.0.113.7"),
+      );
+
+    expect((await withFile()).status).toBe(202);
+    await widget.idle();
+    expect((await withFile()).status).toBe(503);
+    for (const name of await readdir(widget.folder)) {
+      // oxlint-disable-next-line no-await-in-loop
+      await rm(join(widget.folder, name));
+    }
+    const tooSoon = await withFile();
+    time += quotaRecountIntervalMs;
+    const measuredAgain = await withFile();
+    await widget.idle();
+
+    expect(tooSoon.status).toBe(503);
+    expect(measuredAgain.status).toBe(202);
+    expect(await readdir(widget.folder)).toHaveLength(1);
+  });
+
+  it("removes the files of a message the database could not store, so they take no room", async () => {
+    const widget = await widgetFor(undefined, png.length, {
+      db: failingWhen("transaction", () => true),
+    });
+
+    const failed = await widget.app.request(
+      "/widget/messages",
+      newMessage({ kind: "BUG", text: "Capture", ...signed() }, [new File([png], "a.png")]),
+      fromAddress("203.0.113.7"),
+    );
+
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({
+      error: "Votre message n'a pas pu être reçu. Merci de réessayer plus tard.",
+    });
+    expect(await readdir(widget.folder)).toEqual([]);
+  });
+
+  it("tries a message again later when not even its failure could be recorded", async () => {
+    let down = false;
+    let calls = 0;
+    const widget = await widgetFor(
+      () => {
+        calls += 1;
+        if (calls === 1) {
+          // The model fails while the database is down: the failure cannot be recorded.
+          down = true;
+          return Promise.reject(new Error("Model unavailable"));
+        }
+        down = false;
+        return Promise.resolve({ reply: answer, filedBySystem: false });
+      },
+      undefined,
+      { db: failingWhen("update", () => down) },
+    );
+
+    const sent = await widget.app.request(
+      "/widget/messages",
+      newMessage({ kind: "BUG", text: "Panne", ...signed() }),
+      fromAddress("203.0.113.7"),
+    );
+    await widget.idle();
+    const conversation = await widget.app.request(
+      `/widget/conversations/${await conversationOf(sent)}`,
+      { headers: { origin: portal } },
+      fromAddress("203.0.113.7"),
+    );
+
+    expect(calls).toBe(2);
+    expect(await conversation.json()).toMatchObject({
+      messages: [{ fromAgent: false }, { fromAgent: true, text: answer }],
+      waiting: false,
+    });
+  });
+
+  it("counts each address apart once it listens, so one sender cannot block the others", async () => {
+    const widget = await widgetFor();
+    const server = await listenForWidget(widget.app.fetch, "::", 0);
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("The widget does not listen on a port");
+    }
+    const { port } = address;
+    const send = (host: string) =>
+      fetch(
+        `http://${host}:${port}/widget/messages`,
+        newMessage({ kind: "BUG", text: "Panne", email: bruno }),
+      );
+    try {
+      for (let sent = 0; sent < messageRate.max; sent += 1) {
+        // oxlint-disable-next-line no-await-in-loop
+        expect((await send("127.0.0.1")).status).toBe(202);
+        // oxlint-disable-next-line no-await-in-loop
+        await widget.idle();
+      }
+      const sameSender = await send("127.0.0.1");
+      const otherSender = await send("[::1]");
+      await widget.idle();
+
+      expect(sameSender.status).toBe(429);
+      expect(otherSender.status).toBe(202);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });

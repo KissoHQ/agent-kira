@@ -1,61 +1,41 @@
+import type { Server } from "node:net";
+
+import { serve } from "@hono/node-server";
 import type { IMastraLogger } from "@mastra/core/logger";
-import { type ApiRoute, registerApiRoute } from "@mastra/core/server";
 
 import type { ChannelHandler } from "../channel-handler";
 import { loadWidgetEnv } from "../config";
 import { createWidgetApp } from "./adapter";
 
-// The widget app once started. Requests that arrive before, or without a widget, are not found.
-let widget: Awaited<ReturnType<typeof createWidgetApp>>["app"] | undefined;
+type Fetch = Parameters<typeof serve>[0]["fetch"];
 
-// Origins the applications embedding the widget run on. A wrong configuration allows none here,
-// and is reported when the widget starts, without stopping the rest of the server.
-function allowedOrigins(): string[] {
-  try {
-    return loadWidgetEnv()?.WIDGET_ALLOWED_ORIGINS ?? [];
-  } catch {
-    return [];
-  }
-}
-
-// The address a request came from, read from the Node.js bindings Mastra gives the route.
-function remoteAddressOf(env: unknown): string | undefined {
-  if (typeof env !== "object" || env === null || !("incoming" in env)) {
-    return undefined;
-  }
-  const { incoming } = env;
-  if (typeof incoming !== "object" || incoming === null || !("socket" in incoming)) {
-    return undefined;
-  }
-  const { socket } = incoming;
-  if (typeof socket !== "object" || socket === null || !("remoteAddress" in socket)) {
-    return undefined;
-  }
-  return typeof socket.remoteAddress === "string" ? socket.remoteAddress : undefined;
-}
-
-// The routes of the widget on the Mastra server, under /widget. They need no Mastra session: the
-// widget is used by people of other applications, and checks who they are itself. Their CORS rule
-// replaces the default rule of the server, which allows every site.
-export function widgetRoutes(): ApiRoute[] {
-  return [
-    registerApiRoute("/widget/*", {
-      method: "ALL",
-      requiresAuth: false,
-      cors: { origin: allowedOrigins(), allowMethods: ["GET", "POST"] },
-      // The Node.js bindings of the request go along, so the widget knows the address it came from.
-      handler: (c) =>
-        widget === undefined
-          ? c.json({ error: "Not found" }, 404)
-          : widget.fetch(c.req.raw, {
-              incoming: { socket: { remoteAddress: remoteAddressOf(c.env) } },
-            }),
-    }),
-  ];
+// Listens for the widget, and resolves once it listens. A busy port is told in plain words.
+export function listenForWidget(fetch: Fetch, hostname: string, port: number): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const server = serve({ fetch, hostname, port }, () => {
+      server.off("error", onError);
+      resolve(server);
+    });
+    function onError(error: NodeJS.ErrnoException) {
+      reject(
+        error.code === "EADDRINUSE"
+          ? new Error(
+              `Port ${port} of ${hostname} is already in use, often by another agent server still running. Stop it, or choose another port with WIDGET_PORT in .env.`,
+              { cause: error },
+            )
+          : error,
+      );
+    }
+    server.once("error", onError);
+  });
 }
 
 // Starts the widget when the origins of the applications that embed it are configured. Returns
 // false otherwise, so the server keeps running without it.
+//
+// The widget listens on its own port, not as a route of the Mastra server: Mastra hands its routes
+// a copy of the request without the connection, so every person would share one address and one
+// limit, and it reads JSON bodies whole before any route can limit their size.
 export async function startWidgetIfConfigured(
   handler: () => ChannelHandler,
   logger: IMastraLogger,
@@ -69,7 +49,7 @@ export async function startWidgetIfConfigured(
     logger.warn("WIDGET_IDENTITY_SECRETS is not set: every person of the widget is unverified");
   }
   const { db, handle } = handler();
-  const started = await createWidgetApp({
+  const { app } = await createWidgetApp({
     db,
     handle,
     allowedOrigins: env.WIDGET_ALLOWED_ORIGINS,
@@ -86,6 +66,7 @@ export async function startWidgetIfConfigured(
       },
     },
   });
-  widget = started.app;
+  await listenForWidget(app.fetch, env.WIDGET_HOST, env.WIDGET_PORT);
+  logger.info(`Widget listening on ${env.WIDGET_HOST}:${env.WIDGET_PORT}`);
   return true;
 }

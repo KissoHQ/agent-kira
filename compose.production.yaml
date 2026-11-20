@@ -50,11 +50,15 @@ services:
     # only, where the published port does not reach.
     environment:
       MASTRA_HOST: 0.0.0.0
+      WIDGET_HOST: 0.0.0.0
       ATTACHMENTS_DIR: /data/attachments
     volumes:
       - attachments:/data/attachments
     ports:
+      # /health and /ready, for this machine only.
       - "127.0.0.1:4111:4111"
+      # The widget, served over HTTPS by the reverse proxy.
+      - "127.0.0.1:4113:4113"
     depends_on:
       migrate:
         condition: service_completed_successfully

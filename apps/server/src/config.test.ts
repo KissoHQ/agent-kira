@@ -142,6 +142,8 @@ describe("loadWidgetEnv", () => {
       WIDGET_ALLOWED_ORIGINS: ["https://portal.example.com", "http://localhost:4114"],
       WIDGET_IDENTITY_SECRETS: new Map(),
       ATTACHMENTS_DIR: "/var/lib/request-agent/attachments",
+      WIDGET_HOST: "127.0.0.1",
+      WIDGET_PORT: 4113,
       WIDGET_TRUST_PROXY: false,
       WIDGET_ATTACHMENTS_QUOTA_MB: 2048,
     });
@@ -155,6 +157,14 @@ describe("loadWidgetEnv", () => {
     expect(() => loadWidgetEnv({ ...widget, WIDGET_ATTACHMENTS_QUOTA_MB: "0" })).toThrow(
       /WIDGET_ATTACHMENTS_QUOTA_MB/,
     );
+  });
+
+  it("listens on this machine only, on its own port, unless told otherwise", () => {
+    const set = loadWidgetEnv({ ...widget, WIDGET_HOST: "0.0.0.0", WIDGET_PORT: "8080" });
+    expect([set?.WIDGET_HOST, set?.WIDGET_PORT]).toEqual(["0.0.0.0", 8080]);
+    const empty = loadWidgetEnv({ ...widget, WIDGET_HOST: "", WIDGET_PORT: "" });
+    expect([empty?.WIDGET_HOST, empty?.WIDGET_PORT]).toEqual(["127.0.0.1", 4113]);
+    expect(() => loadWidgetEnv({ ...widget, WIDGET_PORT: "70000" })).toThrow(/WIDGET_PORT/);
   });
 
   it("trusts a reverse proxy only when asked", () => {

@@ -92,14 +92,14 @@ The token is the only key to a conversation: the widget keeps it in the storage 
 
 The routes are public, so each network address gets a share of the server. An IPv6 client is counted by its `/64` network, which one person usually holds whole, and an IPv4 address written as IPv6 as the IPv4 address:
 
-| Limit                                         | Value                                                                             | Answer beyond it                                                |
-| --------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Messages sent by one address                  | 10 every 10 minutes                                                               | `429`, with `Retry-After`                                       |
-| Messages of one address waiting for the agent | 3                                                                                 | `429`: "Vos messages précédents sont en cours de traitement…"   |
-| Messages waiting for the agent, in total      | 20                                                                                | `503`: "Le service reçoit beaucoup de demandes…"                |
-| Messages read in their files at the same time | 4, then 50 waiting                                                                | `503`                                                           |
-| Reads of conversations by one address         | 300 every 5 minutes (one every second)                                            | `429`, with `Retry-After`                                       |
-| Space taken by the files                      | `WIDGET_ATTACHMENTS_QUOTA_MB`, files deleted after 40 days or by an administrator | `503`: "Les fichiers ne peuvent pas être reçus pour le moment…" |
+| Limit                                         | Value                                                                                                      | Answer beyond it                                                |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Messages sent by one address                  | 10 every 10 minutes                                                                                        | `429`, with `Retry-After`                                       |
+| Messages of one address waiting for the agent | 3                                                                                                          | `429`: "Vos messages précédents sont en cours de traitement…"   |
+| Messages waiting for the agent, in total      | 20                                                                                                         | `503`: "Le service reçoit beaucoup de demandes…"                |
+| Messages read in their files at the same time | 4, then 50 waiting                                                                                         | `503`                                                           |
+| Reads of conversations by one address         | 300 every 5 minutes (one every second)                                                                     | `429`, with `Retry-After`                                       |
+| Space taken by the files                      | `WIDGET_ATTACHMENTS_QUOTA_MB`, files deleted after `ATTACHMENT_RETENTION_DAYS` (40) or by an administrator | `503`: "Les fichiers ne peuvent pas être reçus pour le moment…" |
 
 These counts are kept in memory: the server runs as one process.
 

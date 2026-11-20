@@ -28,13 +28,15 @@ FROM node AS server
 ENV NODE_ENV=production \
     MASTRA_HOST=0.0.0.0 \
     PORT=4111 \
+    WIDGET_HOST=0.0.0.0 \
+    WIDGET_PORT=4113 \
     MASTRA_TELEMETRY_DISABLED=1
 WORKDIR /app
 COPY --from=server-build /app/apps/server/.mastra/output ./
 # Owned by node, so a volume mounted here starts writable by the server.
 RUN mkdir -p /data/attachments && chown node:node /data/attachments
 USER node
-EXPOSE 4111
+EXPOSE 4111 4113
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
   CMD ["node", "-e", "fetch('http://127.0.0.1:4111/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 CMD ["node", "index.mjs"]

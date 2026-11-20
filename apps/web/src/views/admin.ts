@@ -2,7 +2,6 @@ import {
   channel,
   type ChannelLinkRow,
   type ContactRow,
-  defaultAttachmentRetentionDays,
   filesPageSize,
   minPasswordLength,
   type OrganizationRow,
@@ -652,6 +651,7 @@ const megabytes = (bytes: number) =>
 
 export function filesPage(
   view: ViewContext,
+  retentionDays: number,
   files: StoredFiles,
   feedback: Feedback = {},
 ): Fragment {
@@ -666,9 +666,9 @@ export function filesPage(
         tout.
       </p>
       <p class="muted">
-        Les fichiers joints par le widget sont supprimés automatiquement
-        ${defaultAttachmentRetentionDays} jours après leur réception. Supprimer un fichier ici
-        libère sa place tout de suite. Son nom, son type et sa taille restent avec son message.
+        Les fichiers joints par le widget sont supprimés automatiquement ${retentionDays} jours
+        après leur réception. Supprimer un fichier ici libère sa place tout de suite. Son nom, son
+        type et sa taille restent avec son message.
       </p>
       ${
         files.rows.length === 0

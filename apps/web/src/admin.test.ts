@@ -415,7 +415,12 @@ describe("files", () => {
         storageRef,
       })
       .returning({ id: attachments.id });
-    app = createWebApp({ db: getAppDatabase(), timeZone: "Europe/Paris", attachmentsDir: folder });
+    app = createWebApp({
+      db: getAppDatabase(),
+      timeZone: "Europe/Paris",
+      attachmentsDir: folder,
+      attachmentRetentionDays: 30,
+    });
     const cookie = await signIn(admin);
 
     const listed = await (await get("/admin/files", cookie)).text();
@@ -424,6 +429,8 @@ describe("files", () => {
 
     expect(listed).toContain("capture.png");
     expect(listed).toContain("1 fichiers joints gardés sur le serveur");
+    // The page says the retention the purge uses, as set in ATTACHMENT_RETENTION_DAYS.
+    expect(listed).toContain("supprimés automatiquement 30 jours");
     expect(deleted.headers.get("location")).toBe("/admin/files?done=deleted");
     expect(again.status).toBe(404);
     expect(await readdir(folder)).toEqual([]);

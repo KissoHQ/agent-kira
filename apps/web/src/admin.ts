@@ -74,6 +74,8 @@ export interface AdminDependencies {
   emailLimiter: AttemptLimiter;
   // Folder of the files attached through the widget, to delete them. Without it, none is kept.
   attachmentsDir?: string;
+  // Days the daily purge keeps them, as the page of the files tells.
+  attachmentRetentionDays: number;
 }
 
 const notices = {
@@ -417,6 +419,7 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
       c,
       filesPage(
         deps.view(c),
+        deps.attachmentRetentionDays,
         await listStoredFiles(db, page.parse(c.req.query("page"))),
         feedbackOf(c),
       ),
@@ -428,7 +431,12 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     if (!target.success) {
       return deps.render(
         c,
-        filesPage(deps.view(c), await listStoredFiles(db, 1), failure("INVALID")),
+        filesPage(
+          deps.view(c),
+          deps.attachmentRetentionDays,
+          await listStoredFiles(db, 1),
+          failure("INVALID"),
+        ),
         400,
       );
     }
@@ -436,7 +444,12 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     if (!forgotten.ok) {
       return deps.render(
         c,
-        filesPage(deps.view(c), await listStoredFiles(db, 1), failure(forgotten.error)),
+        filesPage(
+          deps.view(c),
+          deps.attachmentRetentionDays,
+          await listStoredFiles(db, 1),
+          failure(forgotten.error),
+        ),
         404,
       );
     }

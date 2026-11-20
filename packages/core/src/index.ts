@@ -211,4 +211,15 @@ export {
   saveContactRow,
   setContactDisabled,
 } from "./admin/people.ts";
+export {
+  defaultAttachmentRetentionDays,
+  deleteStoredFiles,
+  filesPageSize,
+  findOrphanFiles,
+  forgetOldFiles,
+  forgetStoredFile,
+  listStoredFiles,
+  type StoredFileRow,
+  type StoredFiles,
+} from "./admin/files.ts";
 export { ollamaHeaders } from "./classification/ollama.ts";

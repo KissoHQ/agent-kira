@@ -13,8 +13,11 @@ The widget has no business logic: it sends what the person writes to the agent s
 | `ATTACHMENTS_DIR`             | Absolute path of the folder where the files people attach are written. The web interface of the team reads the same folder to download them                                                                                                                | `/var/lib/request-agent/attachments`                       |
 | `WIDGET_ATTACHMENTS_QUOTA_MB` | Optional. Most space the attached files may take, in megabytes. Beyond, files are refused and messages without files are still taken                                                                                                                       | `2048` (default)                                           |
 | `WIDGET_TRUST_PROXY`          | Optional. `true` only behind a reverse proxy that adds the address of the person to `X-Forwarded-For`, so the limits below count people and not the proxy                                                                                                  | `false` (default)                                          |
+| `WIDGET_HOST`, `WIDGET_PORT`  | Optional. Address and port the widget listens on, apart from the Mastra server. Only this machine by default; `0.0.0.0` in a container                                                                                                                     | `127.0.0.1` and `4113` (default)                           |
 
-Restart the agent server after changing them. The log shows `Widget listening`.
+Restart the agent server after changing them. The log shows `Widget listening on 127.0.0.1:4113`.
+
+The widget listens on its own port, not as a route of the Mastra server: Mastra hands its routes a copy of the request without the connection, so every person would share one address and one limit, and it reads JSON bodies whole before a route can limit their size. Its own server sees the address of each person and applies its size limit before reading a body.
 
 ## Embedding the widget
 
@@ -22,7 +25,7 @@ Add one script tag to the pages of the application:
 
 ```html
 <script
-  src="https://agent.example.com/widget/widget.js"
+  src="https://widget.example.com/widget/widget.js"
   data-project="PORTAL"
   data-user-email="bruno.leroy@globex.example"
   data-user-expires="1793489724"
@@ -74,7 +77,7 @@ The widget signs every message again with the attributes of the page, replies in
 
 ## API
 
-The script uses these routes of the agent server. They need no Mastra session, and only answer the browsers of `WIDGET_ALLOWED_ORIGINS`.
+The script uses these routes of the widget server. They need no Mastra session, and only answer the browsers of `WIDGET_ALLOWED_ORIGINS`.
 
 | Route                                        | Role                                                                                                                                                                            |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -87,7 +90,7 @@ The token is the only key to a conversation: the widget keeps it in the storage 
 
 ## Limits of use
 
-The routes are public, so each network address gets a share of the server:
+The routes are public, so each network address gets a share of the server. An IPv6 client is counted by its `/64` network, which one person usually holds whole, and an IPv4 address written as IPv6 as the IPv4 address:
 
 | Limit                                         | Value                                  | Answer beyond it                                                |
 | --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------- |
@@ -116,6 +119,6 @@ These counts are kept in memory: the server runs as one process.
 
 ## Limits
 
-- The Mastra server listens on this machine only by default. To embed the widget in an application on another machine, set `MASTRA_HOST` and serve the server over HTTPS behind a reverse proxy. The built server serves only the widget, `/health` and `/ready`: the rest of its API is closed.
+- The widget listens on this machine only by default. To embed it in an application on another machine, serve `WIDGET_PORT` over HTTPS behind a reverse proxy, with `WIDGET_TRUST_PROXY=true`. The Mastra server stays on this machine: it serves only `/health` and `/ready` once built, and the rest of its API is closed.
 - The conversations of a person are known to the browser that sent them: another browser or cleared storage does not list them.
 - Screen capture is not available on phones: a file can be attached instead.

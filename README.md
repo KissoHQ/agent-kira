@@ -101,7 +101,7 @@ cp .env.example .env
 | `OLLAMA_BASE_URL`                                                          | Ollama API endpoint. Must end with `/api`                                                                                                       | `http://127.0.0.1:11434/api`                                                     |
 | `OLLAMA_MODEL`                                                             | Model used by the agent. It must be pulled first                                                                                                | `ornith:9b`                                                                      |
 | `OLLAMA_EMBEDDING_MODEL`                                                   | Optional. Model of the knowledge base, with vectors of 1024 numbers. It must be pulled first                                                    | `qwen3-embedding:0.6b` (default)                                                 |
-| `MASTRA_HOST`                                                              | Optional. Address the agent server listens on. Set `0.0.0.0` only behind an HTTPS reverse proxy or in a container, to publish the widget        | `127.0.0.1` (default)                                                            |
+| `MASTRA_HOST`                                                              | Optional. Address the agent server listens on, for `/health` and `/ready`. Set `0.0.0.0` only in a container                                    | `127.0.0.1` (default)                                                            |
 | `OLLAMA_API_KEY`                                                           | Optional. Bearer token of an authenticating proxy in front of a remote Ollama                                                                   | —                                                                                |
 | `LOG_LEVEL`                                                                | Optional. Level of the logs of the agent server: `debug`, `info`, `warn` or `error`                                                             | `info` (default)                                                                 |
 | `CLASSIFICATION_REVIEW_THRESHOLD`                                          | Optional. Below this confidence, from 0 to 1, a request waits for a human review                                                                | `0.8` (default)                                                                  |
@@ -164,7 +164,7 @@ pnpm dev
 
 The API is available on `http://localhost:4111/api` and Mastra Studio, the built-in interface to test the agent, on `http://localhost:4111`. They have no sign-in, so they answer only requests addressed to this machine (`localhost`, `127.0.0.1`), and refuse those sent by a page of another site open in the browser.
 
-The built server (`pnpm start`) serves neither the API nor Studio: only the widget routes, `/health` and `/ready`. The channels call the agent inside the server and never need its API.
+The built server (`pnpm start`) serves neither the API nor Studio: only `/health` and `/ready`. The widget listens apart, on `WIDGET_PORT` (4113). The channels call the agent inside the server and never need its API.
 
 Production build and start:
 
@@ -188,7 +188,7 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
    | `EMAIL_*`                                                                 | The real mailbox, over TLS (see [Connecting email](#connecting-email)), or removed to run without email                                |
    | `LOCAL_MAIL_*`, `TEST_*`, `POSTGRES_PORT`                                 | Removed: they serve the local mail server, the tests and the local database only                                                       |
 
-   `MASTRA_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file, which take precedence over `.env`.
+   `MASTRA_HOST`, `WIDGET_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file, which take precedence over `.env`.
 
 2. Build and start everything. The `migrate` service applies the migrations and sets the passwords of the roles; the agent server and the web interface start once it succeeded:
 
@@ -204,7 +204,9 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
 
 4. Put a reverse proxy with HTTPS in front of the two services, which listen on this machine only:
    - the web interface, such as `https://kira.example.com`, to `127.0.0.1:4112`;
-   - the widget, such as `https://agent.example.com/widget/`, to `127.0.0.1:4111`. The built agent server serves nothing else than `/widget/`, `/health` and `/ready`.
+   - the widget, such as `https://widget.example.com/widget/`, to `127.0.0.1:4113`, with a body limit of 16 MB.
+
+   The agent server itself, on `127.0.0.1:4111`, stays out of the proxy: it only answers `/health` and `/ready`, for this machine.
 
 5. Check the services. `/health` says that the process answers; `/ready` also checks the database, and for the agent server the model in Ollama and the start of each channel, and answers 503 with what is missing:
 
@@ -538,7 +540,7 @@ All dependency versions are declared once in the `catalog` of `pnpm-workspace.ya
 - Duplicates are found among requests sharing words or spelling with the message: a rewording with no word in common, such as "CB" for "carte bancaire", is missed.
 - Email attachments are described (name, type, size) in the interface but cannot be downloaded: their content is only kept inside the stored source of the email. Files sent through the widget are stored and can be downloaded by the team.
 - The text of a message is kept up to 10,000 characters and its subject up to 500, so the model and the search always read a bounded text. A longer text ends with " […]" in the interface. The original message stays whole in the stored source.
-- The widget needs the Mastra server to be reachable from the browsers of the applications. The server listens on this machine only by default: `MASTRA_HOST` opens it, behind a reverse proxy that serves it over HTTPS.
+- The widget must be reachable from the browsers of the applications. It listens on this machine only by default: a reverse proxy serves `WIDGET_PORT` over HTTPS.
 - A support question answered from a help article gets no request: if the model wrongly judges that an article answers it, the team does not see it. The articles themselves are written and kept up to date by the team.
 - Answers are written by a small local model. The check blocks codes, promises, unknown requests and false claims of forwarding, but a clumsy sentence can still pass. The system records no assignee and no planned date: questions about them are passed to the team.
 - The Mastra server API and Studio have no authentication: only `pnpm dev` serves them, to this machine only. They give no access to the request tools. The web interface of the team has its own accounts.

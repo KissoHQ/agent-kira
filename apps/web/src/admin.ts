@@ -1,8 +1,10 @@
 import {
   addChannelLink,
+  authenticateStaff,
   changeOwnPassword,
   channelLinkInput,
   contactAdminInput,
+  createStaffAccount,
   type Database,
   listChannelLinks,
   listContactRows,
@@ -16,14 +18,15 @@ import {
   saveContactRow,
   saveOrganization,
   saveProject,
-  saveStaffAccount,
   setContactDisabled,
   setOrganizationArchived,
   setProjectArchived,
   setStaffDisabled,
+  setStaffIdentity,
   setStaffPassword,
   setStaffRole,
   staffAccountInput,
+  staffIdentityInput,
 } from "@request-agent/core";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
@@ -45,8 +48,10 @@ import {
 import type { Fragment, ViewContext } from "./views/layout.ts";
 
 import type { WebEnv as AdminEnv } from "./app.ts";
+import type { CheckQueue } from "./password-checks.ts";
+import type { AttemptLimiter } from "./sign-in-limiter.ts";
 
-type Status = 200 | 400 | 403 | 404 | 409;
+type Status = 200 | 400 | 403 | 404 | 409 | 429 | 503;
 
 export interface AdminDependencies {
   db: Database;
@@ -56,6 +61,13 @@ export interface AdminDependencies {
     fragment: Fragment,
     status: Status,
   ) => Response | Promise<Response>;
+  // Records who did what, for the logs of the server. Never with a password.
+  audit: (event: string) => void;
+  // The queue of password checks and hashes shared with sign-in, so pages of accounts cannot use
+  // the thread pool of the server either.
+  passwordChecks: CheckQueue;
+  // The attempts of each account, shared with sign-in: a wrong password here counts as there.
+  emailLimiter: AttemptLimiter;
 }
 
 const notices = {
@@ -72,14 +84,26 @@ const isNotice = (value: string): value is Notice => Object.hasOwn(notices, valu
 const errors = {
   DOMAIN_TAKEN: "Ce domaine est déjà celui d'un autre client.",
   KEY_TAKEN: "Ce code est déjà celui d'un autre projet.",
+  KEY_LOCKED: "Le code d'un projet ne change pas : le widget et les canaux le désignent.",
+  UNKNOWN_ORGANIZATION: "Ce client n'existe plus.",
+  STAFF_ACCOUNT: "Ce contact est un compte de l'équipe : modifiez-le depuis la page Équipe.",
+  CLIENT_CONTACT:
+    "Cet e-mail est celui d'un contact d'un client : un compte de l'équipe ne peut pas le reprendre.",
   IDENTITY_TAKEN: "Cet e-mail ou cet identifiant Slack est déjà celui d'un autre contact.",
   UNKNOWN_PROJECT: "Un des projets n'existe plus.",
   ALREADY_LINKED: "Ce canal mène déjà à un projet.",
   LAST_ADMIN: "Il doit rester au moins un administrateur actif.",
   NOT_FOUND: "Élément introuvable.",
   WRONG_PASSWORD: "Mot de passe actuel incorrect.",
+  TOO_MANY: "Trop de mots de passe incorrects. Réessayez dans quelques minutes.",
+  BUSY: "Trop de vérifications en cours. Réessayez dans quelques secondes.",
   INVALID: "Valeurs invalides : vérifiez le formulaire.",
 } as const;
+
+// The status of a refusal: a wrong password is a bad form, too many of them or a full queue are
+// limits.
+const statusOf = (code: "WRONG_PASSWORD" | "TOO_MANY" | "BUSY"): Status =>
+  code === "TOO_MANY" ? 429 : code === "BUSY" ? 503 : 400;
 type ErrorCode = keyof typeof errors;
 
 const id = z.uuid();
@@ -103,7 +127,7 @@ const listOf = (value: string | string[] | undefined): string[] =>
   value === undefined ? [] : Array.isArray(value) ? value : [value];
 
 // After an action, the browser goes back to the list, so reloading does not repeat it.
-const done = (c: Context<AdminEnv>, path: string, notice: Notice) =>
+const back = (c: Context<AdminEnv>, path: string, notice: Notice) =>
   c.redirect(`${path}?done=${notice}`, 303);
 
 const feedbackOf = (c: Context<AdminEnv>): Feedback => {
@@ -118,8 +142,53 @@ const contactFields = (form: Record<string, string | string[]>) => ({
   projectIds: listOf(form.projectIds),
 });
 
+// Who acts, as the logs name them. Values typed by people are quoted, so a line break in them cannot
+// write a false line in the logs.
+const actor = (c: Context<AdminEnv>) => JSON.stringify(c.get("staff").email);
+
 export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependencies): void {
-  const { db } = deps;
+  const { db, passwordChecks, emailLimiter } = deps;
+  const record = (c: Context<AdminEnv>, action: string) => {
+    deps.audit(`Administration by ${actor(c)}: ${action}`);
+  };
+  // Records an action that succeeded, then goes back to the list.
+  const done = (c: Context<AdminEnv>, path: string, notice: Notice, action?: string) => {
+    if (action !== undefined) {
+      record(c, action);
+    }
+    return back(c, path, notice);
+  };
+
+  // Checks the own password of the person who acts, counted as a sign-in attempt of their account
+  // and run in the queue of password checks. Undefined when it is right.
+  async function checkOwnPassword(
+    c: Context<AdminEnv>,
+    given: string | string[] | undefined,
+  ): Promise<"WRONG_PASSWORD" | "TOO_MANY" | "BUSY" | undefined> {
+    const email = c.get("staff").email ?? "";
+    const attempt = emailLimiter.begin(email);
+    if (!attempt.allowed) {
+      return "TOO_MANY";
+    }
+    const password = typeof given === "string" ? given : "";
+    const check = await passwordChecks.run(() => authenticateStaff(db, email, password));
+    if (!check.ran) {
+      emailLimiter.giveBack(email);
+      return "BUSY";
+    }
+    if (check.value?.contactId !== c.get("staff").contactId) {
+      deps.audit(`Wrong password of ${actor(c)} to confirm an action on accounts`);
+      return "WRONG_PASSWORD";
+    }
+    emailLimiter.giveBack(email);
+    return undefined;
+  }
+
+  // Runs the hash of a new password in the queue. Undefined when the queue is full.
+  async function hashed<T>(work: () => Promise<T>): Promise<T | undefined> {
+    const outcome = await passwordChecks.run(work);
+    return outcome.ran ? outcome.value : undefined;
+  }
 
   // Only administrators reach these pages.
   app.use("/admin/*", async (c, next) => {
@@ -140,7 +209,12 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const saved = await saveOrganization(db, input.data);
     return saved.ok
-      ? done(c, "/admin/organizations", "added")
+      ? done(
+          c,
+          "/admin/organizations",
+          "added",
+          `added the client ${JSON.stringify(input.data.name)}`,
+        )
       : showOrganizations(c, failure(saved.error), 409);
   });
   const showOrganization = async (c: Context<AdminEnv>, feedback: Feedback, status: Status) => {
@@ -158,7 +232,7 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const saved = await saveOrganization(db, input.data, target.data);
     return saved.ok
-      ? done(c, "/admin/organizations", "saved")
+      ? done(c, "/admin/organizations", "saved", `changed the client ${target.data}`)
       : showOrganization(c, failure(saved.error), 409);
   });
   app.post("/admin/organizations/:id/archive", async (c) => {
@@ -169,7 +243,12 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const result = await setOrganizationArchived(db, target.data, archived.data);
     return result.ok
-      ? done(c, "/admin/organizations", "archived")
+      ? done(
+          c,
+          "/admin/organizations",
+          "archived",
+          `${archived.data ? "archived" : "restored"} the client ${target.data}`,
+        )
       : showOrganizations(c, failure(result.error), 404);
   });
 
@@ -186,7 +265,7 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const saved = await saveProject(db, input.data);
     return saved.ok
-      ? done(c, "/admin/projects", "added")
+      ? done(c, "/admin/projects", "added", `added the project ${input.data.key}`)
       : showProjects(c, failure(saved.error), 409);
   });
   const showProject = async (c: Context<AdminEnv>, feedback: Feedback, status: Status) => {
@@ -205,7 +284,7 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const saved = await saveProject(db, input.data, target.data);
     return saved.ok
-      ? done(c, "/admin/projects", "saved")
+      ? done(c, "/admin/projects", "saved", `changed the project ${input.data.key}`)
       : showProject(c, failure(saved.error), 409);
   });
   app.post("/admin/projects/:id/archive", async (c) => {
@@ -216,7 +295,12 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const result = await setProjectArchived(db, target.data, archived.data);
     return result.ok
-      ? done(c, "/admin/projects", "archived")
+      ? done(
+          c,
+          "/admin/projects",
+          "archived",
+          `${archived.data ? "archived" : "restored"} the project ${target.data}`,
+        )
       : showProjects(c, failure(result.error), 404);
   });
 
@@ -241,7 +325,7 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const saved = await saveContactRow(db, input.data);
     return saved.ok
-      ? done(c, "/admin/contacts", "added")
+      ? done(c, "/admin/contacts", "added", `added the contact ${saved.value}`)
       : showContacts(c, failure(saved.error), 409);
   });
   const showContact = async (c: Context<AdminEnv>, feedback: Feedback, status: Status) => {
@@ -264,8 +348,11 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const saved = await saveContactRow(db, input.data, target.data);
     return saved.ok
-      ? done(c, "/admin/contacts", "saved")
-      : showContact(c, failure(saved.error), 409);
+      ? done(c, "/admin/contacts", "saved", `changed the contact ${target.data}`)
+      : // An account of the team has no page among the contacts: the list says why.
+        saved.error === "STAFF_ACCOUNT"
+        ? showContacts(c, failure(saved.error), 409)
+        : showContact(c, failure(saved.error), 409);
   });
   app.post("/admin/contacts/:id/disable", async (c) => {
     const target = id.safeParse(c.req.param("id"));
@@ -275,8 +362,13 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const result = await setContactDisabled(db, target.data, disabled.data);
     return result.ok
-      ? done(c, "/admin/contacts", "disabled")
-      : showContacts(c, failure(result.error), 404);
+      ? done(
+          c,
+          "/admin/contacts",
+          "disabled",
+          `${disabled.data ? "disabled" : "enabled"} the contact ${target.data}`,
+        )
+      : showContacts(c, failure(result.error), result.error === "NOT_FOUND" ? 404 : 409);
   });
 
   // Channels.
@@ -292,7 +384,12 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const added = await addChannelLink(db, input.data);
     return added.ok
-      ? done(c, "/admin/channels", "added")
+      ? done(
+          c,
+          "/admin/channels",
+          "added",
+          `linked ${input.data.channel} ${JSON.stringify(input.data.externalId)} to the project ${input.data.projectId}`,
+        )
       : showChannels(c, failure(added.error), 409);
   });
   app.post("/admin/channels/:id/remove", async (c) => {
@@ -302,24 +399,35 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     }
     const removed = await removeChannelLink(db, target.data);
     return removed.ok
-      ? done(c, "/admin/channels", "removed")
+      ? done(c, "/admin/channels", "removed", `removed the channel link ${target.data}`)
       : showChannels(c, failure(removed.error), 404);
   });
 
-  // Accounts of the team.
+  // Accounts of the team. Each change asks the own password of the administrator again.
   const showStaff = async (c: Context<AdminEnv>, feedback: Feedback, status: Status) =>
     deps.render(c, staffPage(deps.view(c), await listStaff(db), feedback), status);
   app.get("/admin/staff", (c) => showStaff(c, feedbackOf(c), 200));
   app.post("/admin/staff", async (c) => {
-    const input = staffAccountInput.safeParse(await formOf(c));
+    const form = await formOf(c);
+    const input = staffAccountInput.safeParse(form);
     if (!input.success) {
       return showStaff(c, failure("INVALID"), 400);
     }
-    const existing = (await listStaff(db)).some((row) => row.email === input.data.email);
-    if (existing) {
-      return showStaff(c, failure("IDENTITY_TAKEN"), 409);
+    const refused = await checkOwnPassword(c, form.confirm);
+    if (refused !== undefined) {
+      return showStaff(c, failure(refused), statusOf(refused));
     }
-    await saveStaffAccount(db, input.data);
+    const created = await hashed(() => createStaffAccount(db, input.data));
+    if (created === undefined) {
+      return showStaff(c, failure("BUSY"), 503);
+    }
+    if (!created.ok) {
+      return showStaff(c, failure(created.error), 409);
+    }
+    record(
+      c,
+      `created the account ${JSON.stringify(input.data.email)} as ${input.data.role ?? "MEMBER"}`,
+    );
     return done(c, "/admin/staff", "added");
   });
   const showMember = async (c: Context<AdminEnv>, feedback: Feedback, status: Status) => {
@@ -328,40 +436,94 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
       ? showStaff(c, failure("NOT_FOUND"), 404)
       : deps.render(c, staffMemberPage(deps.view(c), row, feedback), status);
   };
+  // The account an action targets, as the logs name it.
+  const memberName = async (contactId: string) =>
+    JSON.stringify(
+      (await listStaff(db)).find((row) => row.contactId === contactId)?.email ?? contactId,
+    );
   app.get("/admin/staff/:id", (c) => showMember(c, {}, 200));
+  app.post("/admin/staff/:id", async (c) => {
+    const target = id.safeParse(c.req.param("id"));
+    const form = await formOf(c);
+    const input = staffIdentityInput.safeParse(form);
+    if (!target.success || !input.success) {
+      return showMember(c, failure("INVALID"), 400);
+    }
+    const refused = await checkOwnPassword(c, form.confirm);
+    if (refused !== undefined) {
+      return showMember(c, failure(refused), statusOf(refused));
+    }
+    const before = await memberName(target.data);
+    const result = await setStaffIdentity(db, target.data, input.data);
+    if (!result.ok) {
+      return showMember(c, failure(result.error), result.error === "NOT_FOUND" ? 404 : 409);
+    }
+    record(c, `set the email of ${before} to ${JSON.stringify(input.data.email)}`);
+    return done(c, "/admin/staff", "saved");
+  });
   app.post("/admin/staff/:id/role", async (c) => {
     const target = id.safeParse(c.req.param("id"));
-    const role = z.enum(["ADMIN", "MEMBER"]).safeParse((await formOf(c)).role);
+    const form = await formOf(c);
+    const role = z.enum(["ADMIN", "MEMBER"]).safeParse(form.role);
     if (!target.success || !role.success) {
       return showMember(c, failure("INVALID"), 400);
     }
+    const refused = await checkOwnPassword(c, form.confirm);
+    if (refused !== undefined) {
+      return showMember(c, failure(refused), statusOf(refused));
+    }
     const result = await setStaffRole(db, target.data, role.data);
-    return result.ok ? done(c, "/admin/staff", "saved") : showMember(c, failure(result.error), 409);
+    if (!result.ok) {
+      return showMember(c, failure(result.error), 409);
+    }
+    record(c, `set the role of ${await memberName(target.data)} to ${role.data}`);
+    return done(c, "/admin/staff", "saved");
   });
   app.post("/admin/staff/:id/disable", async (c) => {
     const target = id.safeParse(c.req.param("id"));
-    const disabled = flag.safeParse((await formOf(c)).disabled);
+    const form = await formOf(c);
+    const disabled = flag.safeParse(form.disabled);
     if (!target.success || !disabled.success) {
       return showStaff(c, failure("INVALID"), 400);
     }
+    const refused = await checkOwnPassword(c, form.confirm);
+    if (refused !== undefined) {
+      return showMember(c, failure(refused), statusOf(refused));
+    }
     const result = await setStaffDisabled(db, target.data, disabled.data);
-    return result.ok
-      ? done(c, "/admin/staff", "disabled")
-      : showStaff(c, failure(result.error), 409);
+    if (!result.ok) {
+      return showMember(c, failure(result.error), 409);
+    }
+    record(
+      c,
+      `${disabled.data ? "disabled" : "enabled"} the account ${await memberName(target.data)}`,
+    );
+    return done(c, "/admin/staff", "disabled");
   });
   app.post("/admin/staff/:id/password", async (c) => {
     const target = id.safeParse(c.req.param("id"));
-    const password = passwordInput.safeParse((await formOf(c)).password);
+    const form = await formOf(c);
+    const password = passwordInput.safeParse(form.password);
     if (!target.success || !password.success) {
       return showMember(c, failure("INVALID"), 400);
     }
-    const result = await setStaffPassword(db, target.data, password.data);
-    return result.ok
-      ? done(c, "/admin/staff", "password")
-      : showMember(c, failure(result.error), 404);
+    const refused = await checkOwnPassword(c, form.confirm);
+    if (refused !== undefined) {
+      return showMember(c, failure(refused), statusOf(refused));
+    }
+    const result = await hashed(() => setStaffPassword(db, target.data, password.data));
+    if (result === undefined) {
+      return showMember(c, failure("BUSY"), 503);
+    }
+    if (!result.ok) {
+      return showMember(c, failure(result.error), 404);
+    }
+    record(c, `gave a new password to ${await memberName(target.data)}`);
+    return done(c, "/admin/staff", "password");
   });
 
-  // The own account of each person, administrator or not.
+  // The own account of each person, administrator or not. The current password is checked like a
+  // sign-in: in the queue of checks, and counted among the attempts of the account.
   app.get("/account", (c) => deps.render(c, accountPage(deps.view(c), feedbackOf(c)), 200));
   app.post("/account/password", async (c) => {
     const form = await formOf(c);
@@ -370,15 +532,25 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     if (!next.success) {
       return deps.render(c, accountPage(deps.view(c), failure("INVALID")), 400);
     }
-    const result = await changeOwnPassword(
-      db,
-      c.get("staff"),
-      current,
-      next.data,
-      c.get("sessionToken"),
+    const staff = c.get("staff");
+    const email = staff.email ?? "";
+    const attempt = emailLimiter.begin(email);
+    if (!attempt.allowed) {
+      return deps.render(c, accountPage(deps.view(c), failure("TOO_MANY")), 429);
+    }
+    const outcome = await passwordChecks.run(() =>
+      changeOwnPassword(db, staff, current, next.data, c.get("sessionToken")),
     );
-    return result.ok
-      ? done(c, "/account", "password")
-      : deps.render(c, accountPage(deps.view(c), failure(result.error)), 400);
+    if (!outcome.ran) {
+      emailLimiter.giveBack(email);
+      return deps.render(c, accountPage(deps.view(c), failure("BUSY")), 503);
+    }
+    if (!outcome.value.ok) {
+      deps.audit(`Wrong current password of ${actor(c)} to change it`);
+      return deps.render(c, accountPage(deps.view(c), failure(outcome.value.error)), 400);
+    }
+    emailLimiter.giveBack(email);
+    deps.audit(`Password changed by ${actor(c)}`);
+    return done(c, "/account", "password");
   });
 }

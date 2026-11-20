@@ -184,8 +184,16 @@ function projectForm(action: string, organizations: OrganizationRow[], row?: Pro
         placeholder="SHOP"
         pattern="[A-Za-z][A-Za-z0-9]{1,9}"
         required
+        ${row === undefined ? "" : html`readonly aria-describedby="key-help"`}
       />
     </label>
+    ${
+      row === undefined
+        ? ""
+        : html`<p class="muted" id="key-help">
+            Le code ne change pas : le widget, les canaux et les commandes le désignent.
+          </p>`
+    }
     <label>Nom <input name="name" value="${row?.name ?? ""}" maxlength="120" required /></label>
     <label>
       Description (facultative)
@@ -488,6 +496,13 @@ const passwordField = (name: string, label: string) =>
     />
   </label>`;
 
+// The own password of the administrator, asked again before any change to an account of the team,
+// so a session left open is not enough to take over the accounts.
+const confirmField = html`<label>
+  Votre mot de passe
+  <input type="password" name="confirm" autocomplete="current-password" maxlength="128" required />
+</label>`;
+
 export function staffPage(view: ViewContext, rows: StaffRow[], feedback: Feedback = {}): Fragment {
   return adminPage(
     view,
@@ -513,13 +528,7 @@ export function staffPage(view: ViewContext, rows: StaffRow[], feedback: Feedbac
                   <td>${row.name ?? "—"}</td>
                   <td>${roleLabels[row.role]}</td>
                   <td>${state(row.disabled, "Désactivé")}</td>
-                  <td>
-                    ${actionButton(
-                      `/admin/staff/${row.contactId}/disable`,
-                      row.disabled ? "Réactiver" : "Désactiver",
-                      { disabled: row.disabled ? "false" : "true" },
-                    )}
-                  </td>
+                  <td><a href="/admin/staff/${row.contactId}">Gérer</a></td>
                 </tr>`,
             )}
           </tbody>
@@ -540,7 +549,7 @@ export function staffPage(view: ViewContext, rows: StaffRow[], feedback: Feedbac
               ${options(["MEMBER", "ADMIN"] as const, roleLabels, "MEMBER")}
             </select>
           </label>
-          ${passwordField("password", "Mot de passe initial")}
+          ${passwordField("password", "Mot de passe initial")} ${confirmField}
           <button class="primary" type="submit">Créer le compte</button>
         </form>
       </section>`,
@@ -558,8 +567,24 @@ export function staffMemberPage(
     row.email ?? "Compte",
     feedback,
     html`<p><a href="/admin/staff">← Toute l'équipe</a></p>
+      <p class="muted">Chaque action demande votre propre mot de passe.</p>
       <section class="card">
-        <h2>${row.name ?? row.email} · rôle</h2>
+        <h2>Identité</h2>
+        <form method="post" action="/admin/staff/${row.contactId}">
+          <label>
+            E-mail de connexion
+            <input type="email" name="email" value="${row.email ?? ""}" maxlength="254" required />
+          </label>
+          <label
+            >Nom <input name="name" value="${row.name ?? ""}" maxlength="120" required
+          /></label>
+          ${confirmField}
+          <button class="primary" type="submit">Enregistrer</button>
+        </form>
+        <p class="muted">Un nouvel e-mail ferme toutes les sessions de la personne.</p>
+      </section>
+      <section class="card">
+        <h2>Rôle</h2>
         <form method="post" action="/admin/staff/${row.contactId}/role">
           <label>
             Rôle
@@ -567,13 +592,25 @@ export function staffMemberPage(
               ${options(["MEMBER", "ADMIN"] as const, roleLabels, row.role)}
             </select>
           </label>
+          ${confirmField}
           <button class="primary" type="submit">Changer le rôle</button>
         </form>
       </section>
       <section class="card">
+        <h2>${row.disabled ? "Réactiver le compte" : "Désactiver le compte"}</h2>
+        <form method="post" action="/admin/staff/${row.contactId}/disable">
+          <input type="hidden" name="disabled" value="${row.disabled ? "false" : "true"}" />
+          ${confirmField}
+          <button type="submit">${row.disabled ? "Réactiver" : "Désactiver"}</button>
+        </form>
+        <p class="muted">
+          Un compte désactivé ne peut plus se connecter et ses sessions se ferment aussitôt.
+        </p>
+      </section>
+      <section class="card">
         <h2>Nouveau mot de passe</h2>
         <form method="post" action="/admin/staff/${row.contactId}/password">
-          ${passwordField("password", "Nouveau mot de passe")}
+          ${passwordField("password", "Nouveau mot de passe")} ${confirmField}
           <button class="primary" type="submit">Donner ce mot de passe</button>
         </form>
         <p class="muted">Toutes les sessions de la personne se ferment.</p>

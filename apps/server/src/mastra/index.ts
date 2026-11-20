@@ -8,7 +8,7 @@ import { loadEnv } from "../config";
 import { startEmailIfConfigured } from "../email/start";
 import { createReadiness, ollamaHasModel, readinessRoute } from "../readiness";
 import { startSlackIfConfigured } from "../slack/start";
-import { startWidgetIfConfigured, widgetRoutes } from "../widget/start";
+import { startWidgetIfConfigured } from "../widget/start";
 import { createRequestAgent } from "./agents/request-agent";
 import { apiGuard } from "./api-guard";
 
@@ -41,7 +41,7 @@ export const mastra = new Mastra({
   logger: new ConsoleLogger({ name: "KIRA", level: env.LOG_LEVEL }),
   server: {
     host: env.MASTRA_HOST,
-    apiRoutes: [...widgetRoutes(), readinessRoute(readiness)],
+    apiRoutes: [readinessRoute(readiness)],
     // `mastra dev` sets MASTRA_DEV; `mastra start` and the built server do not.
     middleware: apiGuard({ development: process.env.MASTRA_DEV === "true" }),
   },

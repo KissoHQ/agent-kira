@@ -83,10 +83,12 @@ describe("message handling", () => {
   it("never replaces the answer of a message already handled", async () => {
     const stored = await storeInboundMessage(getAppDatabase(), message("<1@acme.example>"));
 
-    await markHandled(getAppDatabase(), stored.messageId, "Première réponse");
-    await markHandled(getAppDatabase(), stored.messageId, "Seconde réponse");
+    const first = await markHandled(getAppDatabase(), stored.messageId, "Première réponse");
+    const second = await markHandled(getAppDatabase(), stored.messageId, "Seconde réponse");
 
     const [pending] = await listPendingReplies(getAppDatabase(), "EMAIL");
     expect(pending?.reply).toBe("Première réponse");
+    // The caller knows the second answer was not kept, so it does not send it.
+    expect([first, second]).toEqual([true, false]);
   });
 });

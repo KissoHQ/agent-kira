@@ -6,6 +6,7 @@ import { alice, storeMessage } from "../../test/fixtures.ts";
 import { projects } from "../db/schema.ts";
 import { seedDatabase } from "../db/seed.ts";
 import { prepareTurn } from "../requests/turn.ts";
+import { saveStaffAccount, staffAccountInput } from "../staff/accounts.ts";
 import {
   contactAdminInput,
   listContactRows,
@@ -114,6 +115,39 @@ describe("contacts", () => {
         }),
       ),
     ).toEqual({ ok: false, error: "UNKNOWN_PROJECT" });
+  });
+
+  it("leaves the accounts of the team to the page of the team", async () => {
+    const { id } = await aliceRow();
+    await saveStaffAccount(
+      getDatabase(),
+      staffAccountInput.parse({ email: alice, name: "Alice Martin", password: "a long password!" }),
+    );
+
+    expect((await listContactRows(getAppDatabase())).map((row) => row.email)).not.toContain(alice);
+    expect(
+      await saveContactRow(
+        getAppDatabase(),
+        contactAdminInput.parse({ slackUserId: "U0ALICE" }),
+        id,
+      ),
+    ).toEqual({ ok: false, error: "STAFF_ACCOUNT" });
+    expect(await setContactDisabled(getAppDatabase(), id, true)).toEqual({
+      ok: false,
+      error: "STAFF_ACCOUNT",
+    });
+  });
+
+  it("refuses a client that does not exist, without failing", async () => {
+    expect(
+      await saveContactRow(
+        getAppDatabase(),
+        contactAdminInput.parse({
+          email: "new@acme.example",
+          organizationId: "00000000-0000-4000-8000-000000000000",
+        }),
+      ),
+    ).toEqual({ ok: false, error: "UNKNOWN_ORGANIZATION" });
   });
 
   it("disables and enables a contact", async () => {

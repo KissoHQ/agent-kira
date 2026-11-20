@@ -1,12 +1,31 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, notExists } from "drizzle-orm";
 import { z } from "zod";
 
-import type { Database } from "../db/client.ts";
-import { isUniqueViolation } from "../db/errors.ts";
-import { contacts, organizations, projectContacts, projects } from "../db/schema.ts";
+import type { Database, Transaction } from "../db/client.ts";
+import { isForeignKeyViolation, isUniqueViolation } from "../db/errors.ts";
+import { contacts, organizations, projectContacts, projects, staffAccounts } from "../db/schema.ts";
 import { fail, type Result, succeed } from "../requests/views.ts";
 
-// The people of the clients who write to the agent, as an administrator manages them.
+// The people of the clients who write to the agent, as an administrator manages them. The members
+// of the team are managed on the page of the team, which ends their sessions and keeps an
+// administrator: they are neither listed nor changed here.
+
+// Contacts that are not an account of the team.
+const notStaff = (db: Database | Transaction) =>
+  notExists(
+    db
+      .select({ contactId: staffAccounts.contactId })
+      .from(staffAccounts)
+      .where(eq(staffAccounts.contactId, contacts.id)),
+  );
+
+async function isStaffContact(tx: Transaction, id: string): Promise<boolean> {
+  const [row] = await tx
+    .select({ contactId: staffAccounts.contactId })
+    .from(staffAccounts)
+    .where(eq(staffAccounts.contactId, id));
+  return row !== undefined;
+}
 
 const blankToUndefined = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? undefined : value;
@@ -63,6 +82,7 @@ export async function listContactRows(db: Database): Promise<ContactRow[]> {
       })
       .from(contacts)
       .leftJoin(organizations, eq(organizations.id, contacts.organizationId))
+      .where(notStaff(db))
       .orderBy(asc(contacts.email), asc(contacts.slackUserId)),
     db
       .select({ contactId: projectContacts.contactId, id: projects.id, key: projects.key })
@@ -92,9 +112,17 @@ export async function saveContactRow(
   db: Database,
   input: ContactAdminInput,
   id?: string,
-): Promise<Result<string, "IDENTITY_TAKEN" | "NOT_FOUND" | "UNKNOWN_PROJECT">> {
+): Promise<
+  Result<
+    string,
+    "IDENTITY_TAKEN" | "NOT_FOUND" | "STAFF_ACCOUNT" | "UNKNOWN_ORGANIZATION" | "UNKNOWN_PROJECT"
+  >
+> {
   try {
     return await db.transaction(async (tx) => {
+      if (id !== undefined && (await isStaffContact(tx, id))) {
+        return fail("STAFF_ACCOUNT");
+      }
       if (input.projectIds.length > 0) {
         const found = await tx
           .select({ id: projects.id })
@@ -135,6 +163,9 @@ export async function saveContactRow(
     if (isUniqueViolation(error)) {
       return fail("IDENTITY_TAKEN");
     }
+    if (isForeignKeyViolation(error)) {
+      return fail("UNKNOWN_ORGANIZATION");
+    }
     throw error;
   }
 }
@@ -145,11 +176,16 @@ export async function setContactDisabled(
   db: Database,
   id: string,
   disabled: boolean,
-): Promise<Result<null, "NOT_FOUND">> {
-  const [row] = await db
-    .update(contacts)
-    .set({ disabledAt: disabled ? new Date() : null })
-    .where(eq(contacts.id, id))
-    .returning({ id: contacts.id });
-  return row === undefined ? fail("NOT_FOUND") : succeed(null);
+): Promise<Result<null, "NOT_FOUND" | "STAFF_ACCOUNT">> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(contacts)
+      .set({ disabledAt: disabled ? new Date() : null })
+      .where(and(eq(contacts.id, id), notStaff(tx)))
+      .returning({ id: contacts.id });
+    if (row !== undefined) {
+      return succeed(null);
+    }
+    return fail((await isStaffContact(tx, id)) ? "STAFF_ACCOUNT" : "NOT_FOUND");
+  });
 }

@@ -82,8 +82,10 @@ export function createSerialQueue(onError: (error: unknown) => void) {
 export type SerialQueue = ReturnType<typeof createSerialQueue>;
 
 // Waits before sending an answer again: the mail server or Slack may be down for a while. After
-// the last delay, the answer is tried again at that pace until it goes out.
+// the last delay, the answer is tried again at that pace.
 export const defaultSendRetryDelaysMs = [60_000, 300_000, 900_000];
+// Attempts after which an answer is given up: with the delays above, about a day of trying.
+export const maxSendAttempts = 100;
 
 export interface Delivery<Sent> {
   // The inbound message the answer is for, which keeps the answer until it is sent.
@@ -93,6 +95,9 @@ export interface Delivery<Sent> {
   // Keeps the answer that went out in the conversation. A failure here is only logged: the answer
   // is out, and sending it again would send it twice.
   record: (sent: Sent) => Promise<void>;
+  // Whether a failure will happen again whatever the wait, such as a Slack channel archived or an
+  // address the mail server refuses: the answer is then given up at once.
+  isPermanent?: (error: unknown) => boolean;
 }
 
 export interface DeliveryLogger {
@@ -100,7 +105,9 @@ export interface DeliveryLogger {
 }
 
 // Sends the answer of a handled message until it goes out. The answer was kept with the message
-// when it was handled, so a channel that is down, or a restart, does not lose it.
+// when it was handled, so a channel that is down, or a restart, does not lose it. An answer that
+// cannot go out, refused for good or failing for about a day, is given up and reported: trying
+// forever would fill the logs, and hurt the reputation of the mail server of the agent.
 export function createReplyDelivery(
   db: Database,
   queue: SerialQueue,
@@ -112,6 +119,19 @@ export function createReplyDelivery(
     try {
       sent = await delivery.send();
     } catch (error) {
+      if ((delivery.isPermanent?.(error) ?? false) || attempt + 1 >= maxSendAttempts) {
+        logger.error(
+          `The answer to message ${delivery.messageId} was given up after ${attempt + 1} attempts: the request stays in the web interface`,
+          error,
+        );
+        await markReplySent(db, delivery.messageId).catch((markError: unknown) => {
+          logger.error(
+            `The answer to message ${delivery.messageId} could not be given up`,
+            markError,
+          );
+        });
+        return;
+      }
       const delayMs = retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)] ?? 0;
       logger.error(`The answer to message ${delivery.messageId} will be sent again`, error);
       queue.later(delayMs, () => deliver(delivery, attempt + 1));

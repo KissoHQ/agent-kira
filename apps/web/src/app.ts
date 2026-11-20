@@ -5,6 +5,7 @@ import {
   addressKey,
   authenticateStaff,
   cachedCheck,
+  defaultAttachmentRetentionDays,
   changeRequestStatus,
   changeStatusInput,
   closeSession,
@@ -67,6 +68,8 @@ export interface WebAppOptions {
   publicOrigin?: string;
   // Folder where the widget writes the files people attach. Without it, no file is downloaded.
   attachmentsDir?: string;
+  // Days the daily purge keeps the attached files, as told to the team. 40 by default.
+  attachmentRetentionDays?: number;
 }
 
 export type WebEnv = {
@@ -470,7 +473,16 @@ export function createWebApp(options: WebAppOptions) {
     return done(c, input.data.reference.toUpperCase(), "status");
   });
 
-  registerAdministration(app, { db, view, render, audit, passwordChecks, emailLimiter });
+  registerAdministration(app, {
+    db,
+    view,
+    render,
+    audit,
+    passwordChecks,
+    emailLimiter,
+    attachmentsDir: options.attachmentsDir,
+    attachmentRetentionDays: options.attachmentRetentionDays ?? defaultAttachmentRetentionDays,
+  });
 
   app.notFound((c) => c.text("Not found", 404));
   app.onError((error, c) => {

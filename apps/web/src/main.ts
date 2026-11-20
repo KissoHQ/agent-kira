@@ -15,6 +15,7 @@ const app = createWebApp({
   timeZone: env.WEB_TIME_ZONE,
   trustProxy: env.WEB_TRUST_PROXY,
   attachmentsDir: env.ATTACHMENTS_DIR,
+  attachmentRetentionDays: env.ATTACHMENT_RETENTION_DAYS,
   publicOrigin: env.WEB_PUBLIC_ORIGIN,
   onError: (error) => {
     console.error("Request failed:", error.stack ?? error.message);

@@ -76,8 +76,8 @@ services:
       WEB_HOST: 0.0.0.0
       ATTACHMENTS_DIR: /data/attachments
     volumes:
-      # The interface only reads the files the widget stored.
-      - attachments:/data/attachments:ro
+      # The interface downloads the files the widget stored, and an administrator deletes them.
+      - attachments:/data/attachments
     ports:
       - "127.0.0.1:4112:4112"
     depends_on:

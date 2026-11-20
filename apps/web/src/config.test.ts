@@ -16,6 +16,19 @@ describe("loadWebEnv", () => {
     });
   });
 
+  it("reads how long the attached files are kept, 40 days unless set", () => {
+    expect(loadWebEnv(required).ATTACHMENT_RETENTION_DAYS).toBe(40);
+    expect(
+      loadWebEnv({ ...required, ATTACHMENT_RETENTION_DAYS: "" }).ATTACHMENT_RETENTION_DAYS,
+    ).toBe(40);
+    expect(
+      loadWebEnv({ ...required, ATTACHMENT_RETENTION_DAYS: "90" }).ATTACHMENT_RETENTION_DAYS,
+    ).toBe(90);
+    expect(() => loadWebEnv({ ...required, ATTACHMENT_RETENTION_DAYS: "0" })).toThrow(
+      /ATTACHMENT_RETENTION_DAYS/,
+    );
+  });
+
   it("reads an empty address or port as not set", () => {
     expect(loadWebEnv({ ...required, WEB_HOST: "", WEB_PORT: "" })).toMatchObject({
       WEB_HOST: "127.0.0.1",

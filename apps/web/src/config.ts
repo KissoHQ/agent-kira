@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 
-import { loadAppDatabaseEnv } from "@request-agent/core";
+import { attachmentRetentionDays, loadAppDatabaseEnv } from "@request-agent/core";
 import { z } from "zod";
 
 function isTimeZone(zone: string): boolean {
@@ -28,6 +28,8 @@ const webEnvSchema = z.object({
     (value) => (value === "" ? undefined : value),
     z.string().refine(isAbsolute, { message: "Must be an absolute path" }).optional(),
   ),
+  // Days the daily purge keeps the attached files, as the page of the files tells the team.
+  ATTACHMENT_RETENTION_DAYS: attachmentRetentionDays,
   // Set to true only behind a reverse proxy that adds the address of the person to X-Forwarded-For,
   // so the limit of sign-in attempts counts people and not the proxy.
   WEB_TRUST_PROXY: z.stringbool().default(false),

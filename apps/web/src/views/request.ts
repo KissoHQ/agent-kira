@@ -256,7 +256,8 @@ function messageList(view: ViewContext, record: RequestRecord): Fragment {
                             ? html`<a href="/attachments/${file.id}">${file.filename}</a>`
                             : file.filename
                         }
-                        (${file.contentType}, ${Math.ceil(file.sizeBytes / 1024)} Ko)
+                        (${file.contentType}, ${Math.ceil(file.sizeBytes / 1024)}
+                        Ko${file.stored ? "" : ", contenu non gardé"})
                       </li>`,
                   )}
                 </ul>`

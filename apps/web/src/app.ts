@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   addressKey,
   authenticateStaff,
+  cachedCheck,
   changeRequestStatus,
   changeStatusInput,
   closeSession,
@@ -19,6 +20,7 @@ import {
   markDuplicateInput,
   openSession,
   pingDatabase,
+  readinessCheckPeriodMs,
   reviewRequest,
   reviewRequestInput,
   type StaffMember,
@@ -238,8 +240,10 @@ export function createWebApp(options: WebAppOptions) {
 
   app.get("/health", (c) => c.text("ok"));
   // Ready only when the database answers, so an orchestrator sends no one to a broken interface.
+  // The route is public: the database is asked at most once per period, whatever the requests.
+  const databaseAnswers = cachedCheck(() => pingDatabase(db), readinessCheckPeriodMs);
   app.get("/ready", async (c) =>
-    (await pingDatabase(db)) ? c.text("ready") : c.text("database unreachable", 503),
+    (await databaseAnswers()) ? c.text("ready") : c.text("database unreachable", 503),
   );
   app.get("/app.css", (c) =>
     c.body(stylesheet, 200, { "Content-Type": "text/css; charset=utf-8" }),

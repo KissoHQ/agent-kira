@@ -1,6 +1,11 @@
 import { ConsoleLogger } from "@mastra/core/logger";
 import { Mastra } from "@mastra/core/mastra";
-import { ollamaHeaders, pingDatabase } from "@request-agent/core";
+import {
+  cachedCheck,
+  ollamaHeaders,
+  pingDatabase,
+  readinessCheckPeriodMs,
+} from "@request-agent/core";
 import { createOllama } from "ollama-ai-provider-v2";
 
 import { type ChannelHandler, createChannelHandler } from "../channel-handler";
@@ -26,14 +31,18 @@ const ollama = createOllama({
 });
 const requestAgent = createRequestAgent(ollama(env.OLLAMA_MODEL));
 
+// Each check runs at most once per period, however often /ready is asked.
 const readiness = createReadiness({
-  database: () => pingDatabase(handler().db),
-  model: () =>
-    ollamaHasModel({
-      baseUrl: env.OLLAMA_BASE_URL,
-      model: env.OLLAMA_MODEL,
-      headers: ollamaHeaders(env.OLLAMA_API_KEY),
-    }),
+  database: cachedCheck(() => pingDatabase(handler().db), readinessCheckPeriodMs),
+  model: cachedCheck(
+    () =>
+      ollamaHasModel({
+        baseUrl: env.OLLAMA_BASE_URL,
+        model: env.OLLAMA_MODEL,
+        headers: ollamaHeaders(env.OLLAMA_API_KEY),
+      }),
+    readinessCheckPeriodMs,
+  ),
 });
 
 export const mastra = new Mastra({

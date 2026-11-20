@@ -181,6 +181,7 @@ export {
 } from "./staff/sessions.ts";
 export { worksOnProjectByEmail } from "./contacts/membership.ts";
 export { addressKey } from "./limits/address-key.ts";
+export { cachedCheck, readinessCheckPeriodMs } from "./limits/cached-check.ts";
 export { type Admission, createRateLimiter, type RateLimit } from "./limits/rate-limiter.ts";
 export {
   addChannelLink,

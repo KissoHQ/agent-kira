@@ -17,6 +17,7 @@ import {
   defaultRetryDelaysMs,
   handleReliably,
 } from "../reliable-handling";
+import { isPermanentSlackError } from "./errors";
 import { parseSlackEvent, type SlackMessage } from "./events";
 
 // The parts of the Slack clients the adapter uses, so tests can replace them.
@@ -105,6 +106,7 @@ export async function startSlackAdapter(
       messageId: storedMessageId,
       send: () => post(message, text),
       record: (posted) => record(message, text, posted),
+      isPermanent: isPermanentSlackError,
     });
   }
 

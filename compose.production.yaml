@@ -46,17 +46,16 @@ services:
       context: .
       target: server
     env_file: .env
-    # Set here, after .env, so a line left empty in .env cannot make it listen inside the container
-    # only, where the published port does not reach.
+    # Set here, after .env, which cannot change them. The Mastra server, which reads every JSON body
+    # whole before any check of KIRA, listens inside the container only, for its health check. The
+    # widget listens on every interface of the container, behind its published port.
     environment:
-      MASTRA_HOST: 0.0.0.0
+      MASTRA_HOST: 127.0.0.1
       WIDGET_HOST: 0.0.0.0
       ATTACHMENTS_DIR: /data/attachments
     volumes:
       - attachments:/data/attachments
     ports:
-      # /health and /ready, for this machine only.
-      - "127.0.0.1:4111:4111"
       # The widget, served over HTTPS by the reverse proxy.
       - "127.0.0.1:4113:4113"
     depends_on:

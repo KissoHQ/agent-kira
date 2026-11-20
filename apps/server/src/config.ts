@@ -10,8 +10,9 @@ const envSchema = z.object({
   // Level of the logs of the server: info by default, so the start of each channel is shown, even
   // when Mastra runs in production mode.
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  // Address the Mastra server listens on, for /health and /ready. Only this machine by default: a
-  // container sets it to 0.0.0.0, so its published port reaches it.
+  // Address the Mastra server listens on, for /health and /ready. Only this machine, or its own
+  // container, by default: Mastra reads every JSON body whole before any check of KIRA, so it is
+  // never published.
   MASTRA_HOST: z.preprocess(
     (value) => (value === "" ? undefined : value),
     z.string().min(1).default("127.0.0.1"),

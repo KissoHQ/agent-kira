@@ -104,7 +104,7 @@ The steps 3 to 7 are detailed in [`agent.md`](agent.md), the protections in [dec
 
 Every request keeps its provenance and its full history: the messages it comes from, on which channel and from whom, its classification with the model and its confidence, and every change, made by the agent, the system or a named person. The history can only grow: the database refuses to change or delete an event. The tables are described in [`data-model.md`](data-model.md).
 
-The application connects with a restricted database role, which can read, add and update rows, but cannot delete them, change the schema or rewrite the history.
+The programs connect with two restricted database roles, never as the owner. The web interface uses `request_agent_app`: it reads, adds and updates rows, and deletes only the links between projects, people and channels, which the administration pages remove. The agent server, which reads messages written outside the company, uses `request_agent_server`: it gets only the tables and columns its work needs, and nothing on the accounts of the team. Neither can change the schema or rewrite the history. Only the owner, used by the migrations and the maintenance commands, deletes the rest.
 
 ## Observability
 

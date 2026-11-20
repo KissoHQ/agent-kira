@@ -1,6 +1,6 @@
 # Demonstration
 
-This guide runs the two scenarios of the brief, Email → Agent → Request and Slack → Agent → Request, on fictitious data, then checks the result in the web interface. Everything runs on this machine. Only the Slack scenario uses an online service: a test workspace, never a company one.
+This guide runs three scenarios, Email → Agent → Request, Slack → Agent → Request and Widget → Agent → Request, on fictitious data, then checks the result in the web interface. Everything runs on this machine. Only the Slack scenario uses an online service: a test workspace, never a company one.
 
 ## Before you start
 

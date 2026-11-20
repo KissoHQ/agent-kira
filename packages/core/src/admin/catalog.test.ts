@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useAppTestDatabase, useTestDatabase } from "../../test/database.ts";
 import { contacts, projects } from "../db/schema.ts";
 import { seedDatabase } from "../db/seed.ts";
+import { saveStaffAccount, staffAccountInput } from "../staff/accounts.ts";
 import {
   addChannelLink,
   channelLinkInput,
@@ -74,6 +75,26 @@ describe("organizations", () => {
     );
   });
 
+  it("never disables an account of the team when its client is archived", async () => {
+    const acme = await organizationId("Acme");
+    const memberId = await saveStaffAccount(
+      getDatabase(),
+      staffAccountInput.parse({
+        email: "alice.martin@acme.example",
+        name: "Alice Martin",
+        password: "a long staff password",
+      }),
+    );
+
+    await setOrganizationArchived(getAppDatabase(), acme, true);
+
+    const [member] = await getDatabase()
+      .select({ disabledAt: contacts.disabledAt })
+      .from(contacts)
+      .where(eq(contacts.id, memberId));
+    expect(member?.disabledAt).toBeNull();
+  });
+
   it("archives a client with its projects, and disables its contacts", async () => {
     const acme = await organizationId("Acme");
 
@@ -130,6 +151,36 @@ describe("projects", () => {
       organization: null,
       archived: true,
     });
+  });
+
+  it("never changes the key of a project, which the widget and the channels name", async () => {
+    const [shop] = await getDatabase().select().from(projects).where(eq(projects.key, "SHOP"));
+    if (shop === undefined) {
+      throw new Error("No SHOP");
+    }
+
+    expect(
+      await saveProject(
+        getAppDatabase(),
+        projectInput.parse({ key: "SHOP2", name: "Renamed" }),
+        shop.id,
+      ),
+    ).toEqual({ ok: false, error: "KEY_LOCKED" });
+    const [after] = await getDatabase().select().from(projects).where(eq(projects.id, shop.id));
+    expect(after).toMatchObject({ key: "SHOP", name: shop.name });
+  });
+
+  it("refuses a client that does not exist, without failing", async () => {
+    expect(
+      await saveProject(
+        getAppDatabase(),
+        projectInput.parse({
+          key: "NEW",
+          name: "Nouveau",
+          organizationId: "00000000-0000-4000-8000-000000000000",
+        }),
+      ),
+    ).toEqual({ ok: false, error: "UNKNOWN_ORGANIZATION" });
   });
 
   it("refuses a key already used or not a short code", async () => {

@@ -264,7 +264,7 @@ Two roles share the interface:
 | Member        | Handle the requests, and change their own password under "Mon compte"                                                                                                |
 | Administrator | Also manage, under "Administration": the clients, their projects, the contacts and their projects, the channels dedicated to a project, and the accounts of the team |
 
-Nothing is deleted: a client or a project that ends is archived, a contact or an account is disabled, so the history of the requests stays whole. A session ends after 8 hours, or after 1 hour without use. The choices and protections of the interface are described in [decision 008](docs/decisions/008-web-interface.md).
+Nothing is deleted: a client or a project that ends is archived, a contact or an account is disabled, so the history of the requests stays whole. Every change to an account of the team asks the own password of the administrator again, and every action of the administration is written to the logs with who did it. The key of a project never changes once created: the widget, the channels and the commands name it. A session ends after 8 hours, or after 1 hour without use. The choices and protections of the interface are described in [decision 008](docs/decisions/008-web-interface.md).
 
 ## Knowledge base
 

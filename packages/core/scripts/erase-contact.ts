@@ -4,12 +4,12 @@
 // It connects as the owner of the database (DATABASE_URL), the only one allowed to change history.
 // Usage: pnpm contact:erase --email bruno.leroy@globex.example [--confirm]
 //        pnpm contact:erase --slack U012AB3CD [--confirm]
-import { rm } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 import { parseArgs } from "node:util";
 
 import { z } from "zod";
 
+import { deleteStoredFiles } from "../src/admin/files.ts";
 import { connectDatabase } from "../src/db/client.ts";
 import { loadDatabaseEnv } from "../src/env.ts";
 import { erasePerson, personInput } from "../src/privacy/erase.ts";
@@ -27,8 +27,6 @@ if (!person.success) {
   process.exit(1);
 }
 
-// Files written by the widget are named by a UUID: anything else is never deleted.
-const storageRef = z.uuid();
 const attachmentsDir = process.env.ATTACHMENTS_DIR;
 
 const { DATABASE_URL } = loadDatabaseEnv();
@@ -60,21 +58,13 @@ try {
       console.error(erasure.storageRefs.join("\n"));
       process.exitCode = 1;
     } else {
-      const folder = attachmentsDir ?? "";
-      const refs = erasure.storageRefs.filter((ref) => storageRef.safeParse(ref).success);
-      // Every file is tried: one that cannot be deleted, such as on a read-only folder, is listed
-      // to be deleted by hand, and the others are deleted anyway.
-      const removals = await Promise.allSettled(
-        refs.map((ref) => rm(join(folder, ref), { force: true })),
-      );
-      const left = refs.flatMap((ref, index) => {
-        const removal = removals[index];
-        return removal?.status === "rejected"
-          ? [`${join(folder, ref)}: ${String(removal.reason)}`]
-          : [];
-      });
+      // Every file is tried: one that cannot be deleted, such as on a read-only folder, is listed,
+      // and the daily purge deletes it once no message refers to it.
+      const { failed: left } = await deleteStoredFiles(attachmentsDir ?? "", erasure.storageRefs);
       if (left.length > 0) {
-        console.error("The database is erased, but these files could not be deleted:");
+        console.error(
+          "The database is erased, but these files could not be deleted; the daily purge tries them again:",
+        );
         console.error(left.join("\n"));
         process.exitCode = 1;
       } else {

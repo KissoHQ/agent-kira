@@ -62,11 +62,13 @@ The team works through the review queue in the web interface (`pnpm web`, see [d
 
 ## Duplicates
 
-When a message is a new request (any type but `FOLLOW_UP`, `STATUS_REQUEST` and `OTHER`) and its project is identified, the code compares it with the open requests (`NEW`, `IN_PROGRESS`, `WAITING_FOR_INFO`) of that project that the sender can reach:
+When a message is a new request (any type but `FOLLOW_UP`, `STATUS_REQUEST` and `OTHER`) and its project is identified, the code compares it with the open requests (`NEW`, `IN_PROGRESS`, `WAITING_FOR_INFO`) of that project that the sender can reach and that are not themselves linked to another request:
 
 1. The 5 best requests by full-text search and the 5 best by trigram similarity, at most 8 in all, are the candidates. An unverified sender reaches no request, so the existence of other requests is never revealed.
 2. The model reads the message and the candidates, and names the request about the same problem, or none. Its confidence is read from the probabilities of its answer.
 3. With a confidence of at least the review threshold, `create_request` adds the message to that request instead of filing a new one, and the answer says so. Below it, a new request is filed, linked to the candidate (`duplicate_of_request_id`), and waits for a review with the reason `POSSIBLE_DUPLICATE`.
+
+Every duplicate points straight to an original that is not itself a duplicate, so no chain or loop forms: a request already linked to another one is never a candidate, a person cannot choose a duplicate as the original, and when a request becomes a duplicate, the requests linked to it are linked to its original. A closed duplicate that a person opens again is no longer linked.
 
 Measured on 24 messages against 84 requests per project. The candidate search found the request about the same problem 7 times out of 8: the miss shares no word with it ("régler par CB" next to "paiement par carte bancaire"). Given the candidates, the model took the right decision for all 24 messages: it recognized the 9 duplicates among them, and named no request for the 15 others, including close but different problems such as PayPal next to card payments. Its confidence on the right duplicates ranged from 0.56 to 0.92, so with the threshold of 0.8, 3 messages were added to their request and 6 were filed for review, linked to the right one. Adding a message to the wrong request would hide it, while an extra review costs a click, so the threshold stays prudent. The check takes about 35 s per message on a CPU.
 

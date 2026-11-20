@@ -1,9 +1,16 @@
-import { and, asc, count, eq, isNull } from "drizzle-orm";
+import { and, asc, count, eq, isNull, notExists } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "../db/client.ts";
-import { isUniqueViolation } from "../db/errors.ts";
-import { channel, contacts, organizations, projectChannels, projects } from "../db/schema.ts";
+import { isForeignKeyViolation, isUniqueViolation } from "../db/errors.ts";
+import {
+  channel,
+  contacts,
+  organizations,
+  projectChannels,
+  projects,
+  staffAccounts,
+} from "../db/schema.ts";
 import { fail, type Result, succeed } from "../requests/views.ts";
 
 // What an administrator manages: the clients, their projects, and the channels that lead to a
@@ -117,7 +124,8 @@ export async function saveOrganization(
 }
 
 // A client that left: it is archived with its projects, and its contacts are disabled, so their
-// messages are treated as those of unknown senders. Restoring the client restores only itself: its
+// messages are treated as those of unknown senders. An account of the team is never disabled here:
+// only the page of the team does that. Restoring the client restores only itself: its
 // projects and contacts are restored one by one, as each may have ended on its own.
 export async function setOrganizationArchived(
   db: Database,
@@ -142,7 +150,18 @@ export async function setOrganizationArchived(
       await tx
         .update(contacts)
         .set({ disabledAt: now })
-        .where(and(eq(contacts.organizationId, id), isNull(contacts.disabledAt)));
+        .where(
+          and(
+            eq(contacts.organizationId, id),
+            isNull(contacts.disabledAt),
+            notExists(
+              tx
+                .select({ contactId: staffAccounts.contactId })
+                .from(staffAccounts)
+                .where(eq(staffAccounts.contactId, contacts.id)),
+            ),
+          ),
+        );
     }
     return succeed(null);
   });
@@ -183,31 +202,48 @@ export async function listProjectRows(db: Database): Promise<ProjectRow[]> {
   }));
 }
 
-// Creates a project, or changes the one with this id.
+// Creates a project, or changes the one with this id. The key of a project never changes: the
+// applications that embed the widget sign with the secret of that key, and the channels and the
+// commands name it, so a new key would silently cut them off, and a key used again would let the
+// application of the old project vouch for the people of the new one.
 export async function saveProject(
   db: Database,
   input: ProjectInput,
   id?: string,
-): Promise<Result<string, "KEY_TAKEN" | "NOT_FOUND">> {
+): Promise<Result<string, "KEY_TAKEN" | "KEY_LOCKED" | "NOT_FOUND" | "UNKNOWN_ORGANIZATION">> {
   const values = {
-    key: input.key,
     name: input.name,
     description: input.description ?? null,
     organizationId: input.organizationId ?? null,
   };
   try {
-    const [row] =
-      id === undefined
-        ? await db.insert(projects).values(values).returning({ id: projects.id })
-        : await db
-            .update(projects)
-            .set(values)
-            .where(eq(projects.id, id))
-            .returning({ id: projects.id });
-    return row === undefined ? fail("NOT_FOUND") : succeed(row.id);
+    if (id === undefined) {
+      const [created] = await db
+        .insert(projects)
+        .values({ ...values, key: input.key })
+        .returning({ id: projects.id });
+      return created === undefined ? fail("NOT_FOUND") : succeed(created.id);
+    }
+    // The key is part of the condition: a form with another key changes nothing.
+    const [row] = await db
+      .update(projects)
+      .set(values)
+      .where(and(eq(projects.id, id), eq(projects.key, input.key)))
+      .returning({ id: projects.id });
+    if (row !== undefined) {
+      return succeed(row.id);
+    }
+    const [existing] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, id));
+    return fail(existing === undefined ? "NOT_FOUND" : "KEY_LOCKED");
   } catch (error) {
     if (isUniqueViolation(error)) {
       return fail("KEY_TAKEN");
+    }
+    if (isForeignKeyViolation(error)) {
+      return fail("UNKNOWN_ORGANIZATION");
     }
     throw error;
   }

@@ -1,18 +1,19 @@
 // Deletes the data the system no longer needs: sessions of the web interface that ended more than
 // a month ago, the original payload of messages handled more than a set number of days ago, 365 by
-// default, and the files attached through the widget more than 40 days ago by default. The texts
+// default, and the files attached through the widget more than ATTACHMENT_RETENTION_DAYS ago, 40
+// by default. The texts
 // of the messages, and the name, type and size of each file, stay. Files left in the folder that
 // no message refers to are deleted too. Meant to run once a day, such as from cron.
 // It connects as the owner of the database (DATABASE_URL), and deletes the files from
 // ATTACHMENTS_DIR.
-// Usage: pnpm db:purge [--source-retention-days 365] [--attachment-retention-days 40]
+// Usage: pnpm db:purge [--source-retention-days 365]
 import { isAbsolute } from "node:path";
 import { parseArgs } from "node:util";
 
 import { z } from "zod";
 
 import {
-  defaultAttachmentRetentionDays,
+  attachmentRetentionDays,
   deleteStoredFiles,
   findOrphanFiles,
   forgetOldFiles,
@@ -22,19 +23,16 @@ import { loadDatabaseEnv } from "../src/env.ts";
 import { purgeOldData } from "../src/privacy/erase.ts";
 
 const { values } = parseArgs({
-  options: {
-    "source-retention-days": { type: "string", default: "365" },
-    "attachment-retention-days": {
-      type: "string",
-      default: String(defaultAttachmentRetentionDays),
-    },
-  },
+  options: { "source-retention-days": { type: "string", default: "365" } },
 });
-const wholeDays = z.coerce.number().int().min(1);
-const sourceDays = wholeDays.safeParse(values["source-retention-days"]);
-const attachmentDays = wholeDays.safeParse(values["attachment-retention-days"]);
-if (!sourceDays.success || !attachmentDays.success) {
-  console.error("The retentions must be whole numbers of days, at least 1");
+const sourceDays = z.coerce.number().int().min(1).safeParse(values["source-retention-days"]);
+if (!sourceDays.success) {
+  console.error("--source-retention-days must be a whole number of days, at least 1");
+  process.exit(1);
+}
+const attachmentDays = attachmentRetentionDays.safeParse(process.env.ATTACHMENT_RETENTION_DAYS);
+if (!attachmentDays.success) {
+  console.error("ATTACHMENT_RETENTION_DAYS must be a whole number of days, at least 1");
   process.exit(1);
 }
 const attachmentsDir = process.env.ATTACHMENTS_DIR;

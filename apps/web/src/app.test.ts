@@ -642,6 +642,22 @@ describe("actions", () => {
     expect(await record(repeated)).toMatchObject({ status: "CLOSED", duplicateOf: original });
   });
 
+  it("refuses to close as a duplicate a request that changed since the page was opened", async () => {
+    const cookie = await signIn();
+    const original = await portalRequest("Le portail plante.");
+    const repeated = await portalRequest("Le portail plante encore.");
+
+    const response = await post(
+      `/requests/${repeated}/duplicate`,
+      { duplicateOf: original, version: new Date(0).toISOString() },
+      { cookie },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("La demande a changé pendant que vous la consultiez");
+    expect((await record(repeated)).status).toBe("NEW");
+  });
+
   it("refuses to mark a request as its own duplicate or of an unknown one", async () => {
     const cookie = await signIn();
     const reference = await portalRequest("Le portail plante.");
@@ -666,7 +682,7 @@ describe("actions", () => {
     expect((await record(reference)).status).toBe("NEW");
   });
 
-  it("refuses an original that is itself a closed duplicate, and says which to choose", async () => {
+  it("refuses an original that is itself a duplicate, and says which to choose", async () => {
     const cookie = await signIn();
     const original = await portalRequest("Le portail plante.");
     const repeated = await portalRequest("Le portail plante encore.");
@@ -679,7 +695,7 @@ describe("actions", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await response.text()).toContain("elle-même un doublon fermé");
+    expect(await response.text()).toContain("elle-même un doublon : indiquez la demande");
     expect((await record(original)).status).toBe("NEW");
   });
 

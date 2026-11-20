@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { useAppTestDatabase, useTestDatabase } from "../../test/database.ts";
 import { type ChannelMessage, storeInboundMessage, storeOutboundMessage } from "./inbox.ts";
 import {
+  handledAtOf,
   listPendingReplies,
   listUnhandledMessages,
   markHandled,
@@ -97,5 +98,13 @@ describe("message handling", () => {
     const stored = await storeInboundMessage(getAppDatabase(), message("<2@acme.example>"));
 
     expect(await requestReferenceOf(getAppDatabase(), stored.messageId)).toBeUndefined();
+  });
+
+  it("tells when a message was handled, and nothing before", async () => {
+    const stored = await storeInboundMessage(getAppDatabase(), message("<3@acme.example>"));
+
+    expect(await handledAtOf(getAppDatabase(), stored.messageId)).toBeUndefined();
+    await markHandled(getAppDatabase(), stored.messageId);
+    expect(await handledAtOf(getAppDatabase(), stored.messageId)).toBeInstanceOf(Date);
   });
 });

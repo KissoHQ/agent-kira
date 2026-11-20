@@ -35,6 +35,16 @@ export async function markHandled(
   return marked.length > 0;
 }
 
+// When the system finished handling a message, or undefined while it is not handled. It is kept in
+// the database, so the time an answer has been waiting survives a restart.
+export async function handledAtOf(db: Database, messageId: string): Promise<Date | undefined> {
+  const [row] = await db
+    .select({ handledAt: messages.handledAt })
+    .from(messages)
+    .where(eq(messages.id, messageId));
+  return row?.handledAt ?? undefined;
+}
+
 // The reference of the request a message is filed under, as recorded by the system, or undefined.
 // Unlike a reference in a text, it cannot name a request the sender did not make.
 export async function requestReferenceOf(

@@ -108,6 +108,7 @@ export {
   type ConversationThread,
 } from "./messages/conversation.ts";
 export {
+  handledAtOf,
   listPendingReplies,
   listUnhandledMessages,
   markHandled,

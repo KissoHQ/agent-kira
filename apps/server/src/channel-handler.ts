@@ -12,17 +12,8 @@ import {
   type TurnInput,
 } from "@request-agent/core";
 
-import { type HandledMessage, handleMessage } from "./mastra/agents/handle-message";
-
-// Longest wait for one classification. On a CPU a classification takes up to about a minute.
-const classificationTimeoutMs = 300_000;
-
-// Longest run of the agent on one message. On a CPU an answer takes from 2 to 8 minutes, with the
-// retries of the answer check.
-const agentTimeoutMs = 15 * 60 * 1000;
-
-// Longest wait for the vector of a question: about 0.3 s on a CPU, more while the model loads.
-const embeddingTimeoutMs = 60_000;
+import { loadHandlingLimits } from "./config";
+import { type AgentRun, type HandledMessage, handleMessage } from "./mastra/agents/handle-message";
 
 export interface ChannelHandler {
   db: Database;
@@ -30,19 +21,22 @@ export interface ChannelHandler {
 }
 
 // What every channel adapter needs: the database, with the restricted role of the server, and the
-// agent bound to the classifier and the knowledge base.
+// agent bound to the classifier and the knowledge base. A run of the agent that a limit cut is
+// reported, so the team sees whether the limits fit the machine that runs Ollama.
 export function createChannelHandler(
   agent: Agent,
   onDatabaseError: (error: Error) => void,
+  onLimitCut: (run: AgentRun) => void,
 ): ChannelHandler {
   const classifierEnv = loadClassifierEnv();
+  const limits = loadHandlingLimits();
   const { db } = connectDatabase(loadServerDatabaseEnv().SERVER_DATABASE_URL, {
     onError: onDatabaseError,
   });
   const ollama = {
     baseUrl: classifierEnv.OLLAMA_BASE_URL,
     model: classifierEnv.OLLAMA_MODEL,
-    timeoutMs: classificationTimeoutMs,
+    timeoutMs: limits.classificationTimeoutMs,
     apiKey: classifierEnv.OLLAMA_API_KEY,
   };
   const classify = createOllamaClassifier(ollama);
@@ -50,7 +44,7 @@ export function createChannelHandler(
   const embedder = createOllamaEmbedder({
     baseUrl: classifierEnv.OLLAMA_BASE_URL,
     model: loadKnowledgeEnv().OLLAMA_EMBEDDING_MODEL,
-    timeoutMs: embeddingTimeoutMs,
+    timeoutMs: limits.embeddingTimeoutMs,
     apiKey: classifierEnv.OLLAMA_API_KEY,
   });
   return {
@@ -61,7 +55,12 @@ export function createChannelHandler(
         judgeDuplicate,
         reviewThreshold: classifierEnv.CLASSIFICATION_REVIEW_THRESHOLD,
         searchKnowledge: (actor, question) => searchKnowledge(db, embedder, actor, question),
-        agentTimeoutMs,
+        agentTimeoutMs: limits.agentTimeoutMs,
+        onAgentRun: (run) => {
+          if (run.cutBy !== undefined) {
+            onLimitCut(run);
+          }
+        },
       }),
   };
 }

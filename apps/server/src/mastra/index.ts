@@ -61,9 +61,21 @@ const logger = mastra.getLogger();
 // One database pool and one classifier for every channel, created only when a channel needs them.
 let channelHandler: ChannelHandler | undefined;
 const handler = () => {
-  channelHandler ??= createChannelHandler(requestAgent, (error) => {
-    logger.error("Database connection lost", { error: error.message });
-  });
+  channelHandler ??= createChannelHandler(
+    requestAgent,
+    (error) => {
+      logger.error("Database connection lost", { error: error.message });
+    },
+    (run) => {
+      // Expected for a message that makes the agent loop. Frequent cuts mean the limits do not fit
+      // the machine that runs Ollama: docs/agent.md tells how to measure them again.
+      logger.warn("The agent was stopped by a limit before it answered", {
+        messageId: run.messageId,
+        limit: run.cutBy,
+        modelCalls: run.modelCalls,
+      });
+    },
+  );
   return channelHandler;
 };
 

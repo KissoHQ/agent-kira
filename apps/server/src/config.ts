@@ -29,14 +29,14 @@ const timeoutSeconds = (defaultSeconds: number) =>
   );
 
 // Longest waits for the model. Their right values depend on the machine that runs Ollama, so they
-// are measured there with `pnpm eval:agent`, as docs/agent.md describes. The defaults come from a
-// CPU, the slowest case.
+// are measured there with `pnpm eval:agent`, as docs/agent.md describes. The defaults were
+// measured on the CPU of a development machine.
 const handlingLimitsEnvSchema = z.object({
   // One call that classifies a message or judges a duplicate.
   CLASSIFICATION_TIMEOUT_SECONDS: timeoutSeconds(300),
-  // The whole run of the agent on one message, all its model calls and tools included. It must
-  // let the agent reach its step limit, which ends the run cleanly: a run cut by this time limit
-  // is handled again from the start.
+  // The whole run of the agent on one message, all its model calls and tools included. A run cut
+  // by it loses the answer of the model: code answers and files the message for a person. So it
+  // must let the longest run allowed by the step limit end.
   AGENT_TIMEOUT_SECONDS: timeoutSeconds(900),
   // One call that turns a question into a vector, to search the help articles.
   EMBEDDING_TIMEOUT_SECONDS: timeoutSeconds(60),

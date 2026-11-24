@@ -47,9 +47,19 @@ export interface HandlingSettings {
   // Help articles closest to a question, among the projects of the sender.
   searchKnowledge: (actor: ClassifiedTurn["actor"], question: string) => Promise<KnowledgeHit[]>;
   // Longest run of the agent on one message, all its calls included. A model that stops answering
-  // would otherwise hold the queue of its channel forever; the message is then retried, and filed
-  // for a person after the last attempt.
+  // would otherwise hold the queue of its channel forever. The run then ends like at the step
+  // limit: what the tools did stays, and code writes the answer and files the message for a person.
   agentTimeoutMs: number;
+  // Told how each run of the agent ended, to report the runs a limit cut.
+  onAgentRun?: (run: AgentRun) => void;
+}
+
+export interface AgentRun {
+  messageId: string;
+  // Calls to the model that returned, the answers written again after a rejection included.
+  modelCalls: number;
+  // The limit that ended the run before the model wrote its answer, if any.
+  cutBy: "step-limit" | "time-limit" | undefined;
 }
 
 export interface HandledMessage {
@@ -180,6 +190,22 @@ function finalReply(
     : `${answer}\n\n${filedForReviewReply(filedBySystem.reference)}`;
 }
 
+// A run ends with tool calls only at the step limit or after a question to the sender, which is
+// the answer itself. Mastra ends a run stopped by its abort signal as "aborted", without an error.
+function limitThatCut(
+  result: Awaited<ReturnType<Agent["generate"]>>,
+  outcomes: ToolOutcome[],
+): AgentRun["cutBy"] {
+  if (result.finishReason === "aborted") {
+    return "time-limit";
+  }
+  const last = result.steps.at(-1);
+  if (last !== undefined && last.toolCalls.length > 0 && !askedForDetails(outcomes)) {
+    return "step-limit";
+  }
+  return undefined;
+}
+
 // The answer is the text of the last step, which ended the run without calling a tool and which
 // the answer check read. Text the model wrote next to its tool calls is not an answer: it can
 // think aloud there, and it would repeat itself.
@@ -222,6 +248,11 @@ export async function handleMessage(
     outputProcessors: [createAnswerCheck(() => answerContext(system, turn.messageText, outcomes))],
     maxProcessorRetries: maxAnswerRetries,
     abortSignal: AbortSignal.timeout(settings.agentTimeoutMs),
+  });
+  settings.onAgentRun?.({
+    messageId: turn.messageId,
+    modelCalls: result.steps.length,
+    cutBy: limitThatCut(result, outcomes),
   });
 
   const answer = finalAnswer(result);

@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { offeredTools, type ScriptedStep, scriptedModel } from "../../../test/scripted-model";
 import { maxAnswerRetries } from "./answer-check";
-import { handleMessage, maxAgentSteps } from "./handle-message";
+import { type AgentRun, handleMessage, maxAgentSteps } from "./handle-message";
 import { createRequestAgent } from "./request-agent";
 
 const getDatabase = useTestDatabase();
@@ -58,6 +58,7 @@ async function run(
 ) {
   const model = options.model ?? scriptedModel(steps);
   const searches: { actor: string; question: string }[] = [];
+  const runs: AgentRun[] = [];
   const messageId = await storeMessage(getDatabase(), {
     sender,
     bodyText: options.text ?? "Le portail ne répond plus.",
@@ -76,9 +77,10 @@ async function run(
         return Promise.resolve(options.articles ?? []);
       },
       agentTimeoutMs: options.agentTimeoutMs ?? 60_000,
+      onAgentRun: (agentRun) => runs.push(agentRun),
     },
   );
-  return { model, result, messageId, searches };
+  return { model, result, messageId, searches, runs };
 }
 
 describe("handleMessage", () => {
@@ -94,9 +96,10 @@ describe("handleMessage", () => {
     });
 
     const started = performance.now();
-    const { result } = await run([], bruno, { model: silent, agentTimeoutMs: 50 });
+    const { result, runs, messageId } = await run([], bruno, { model: silent, agentTimeoutMs: 50 });
 
     expect(performance.now() - started).toBeLessThan(5000);
+    expect(runs).toEqual([{ messageId, modelCalls: 0, cutBy: "time-limit" }]);
     expect(result).toEqual({
       reply:
         "Votre message est enregistré sous la référence REQ-0001. Une personne de l'équipe va le traiter.",
@@ -248,12 +251,48 @@ describe("handleMessage", () => {
   });
 
   it("stops after a bounded number of steps when the model keeps calling tools", async () => {
-    const { model } = await run(
+    const { model, runs, messageId } = await run(
       [{ toolCalls: [{ tool: "get_request_status", input: { reference: "REQ-0001" } }] }],
       bruno,
     );
 
     expect(model.doGenerateCalls).toHaveLength(maxAgentSteps);
+    expect(runs).toEqual([{ messageId, modelCalls: maxAgentSteps, cutBy: "step-limit" }]);
+  });
+
+  it("lets the longest handling the instructions ask for end with the answer of the model", async () => {
+    await run([{ toolCalls: [{ tool: "create_request", input: {} }] }], bruno);
+    const answer =
+      "Votre demande REQ-0001 : Portail inaccessible est enregistrée. Votre question sur la date est transmise à l'équipe.";
+    // A status request with neither a linked request nor a reference: find the request, file the
+    // message under it, read its status, pass the question that no tool answers, then answer. The
+    // first answer makes a promise, so it is rejected and written again.
+    const { model, result, runs, messageId } = await run(
+      [
+        { toolCalls: [{ tool: "search_requests", input: { query: "portail" } }] },
+        { toolCalls: [{ tool: "add_message_to_request", input: { reference: "REQ-0001" } }] },
+        { toolCalls: [{ tool: "get_request_status", input: { reference: "REQ-0001" } }] },
+        {
+          toolCalls: [
+            {
+              tool: "forward_to_team",
+              input: { question: "Quand sera-t-il corrigé ?", reference: "REQ-0001" },
+            },
+          ],
+        },
+        { text: "Je vais vérifier avec l'équipe." },
+        { text: answer },
+      ],
+      bruno,
+      {
+        classification: { type: "STATUS_REQUEST" },
+        text: "Où en est mon signalement sur le portail ? Et quand sera-t-il corrigé ?",
+      },
+    );
+
+    expect(result).toEqual({ reply: answer, filedBySystem: false });
+    expect(model.doGenerateCalls).toHaveLength(6);
+    expect(runs).toEqual([{ messageId, modelCalls: 6, cutBy: undefined }]);
   });
 
   it("never sends an answer naming a request no tool returned, and files a message left unhandled", async () => {
@@ -273,7 +312,7 @@ describe("handleMessage", () => {
 
   it("asks which project when the sender works on several, instead of guessing", async () => {
     const question = "Ce problème concerne-t-il la boutique (SHOP) ou le CRM ?";
-    const { result } = await run(
+    const { result, runs } = await run(
       [
         { toolCalls: [{ tool: "create_request", input: {} }] },
         { toolCalls: [{ tool: "request_clarification", input: { question } }] },
@@ -283,6 +322,8 @@ describe("handleMessage", () => {
     );
 
     expect(result).toEqual({ reply: question, filedBySystem: false });
+    // A question to the sender ends the run with a tool call, but no limit cut it.
+    expect(runs.map((agentRun) => agentRun.cutBy)).toEqual([undefined]);
     const [request] = await getDatabase().select().from(requests);
     expect(request).toMatchObject({
       status: "WAITING_FOR_INFO",

@@ -1,0 +1,110 @@
+[
+  {
+    "case": "new bug",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "invoices",
+    "subject": "Export des factures",
+    "text": "Bonjour, depuis ce matin l'export PDF des factures du portail renvoie une erreur 500. Plus personne ne peut télécharger ses factures."
+  },
+  {
+    "case": "follow-up in the same conversation, with a question",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "invoices",
+    "subject": "Re: Export des factures",
+    "text": "Toujours la même erreur ce matin, sur tous les navigateurs. Où en est ma demande ?"
+  },
+  {
+    "case": "status request without reference, in a new conversation",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "status",
+    "subject": "Suivi",
+    "text": "Bonjour, où en est mon signalement sur l'export PDF des factures ? Et quand sera-t-il corrigé ?"
+  },
+  {
+    "case": "help question answered by an article",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "users",
+    "subject": "Utilisateurs",
+    "text": "Comment ajouter un utilisateur au portail ?"
+  },
+  {
+    "case": "help question that no article answers",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "mobile",
+    "subject": "Application mobile",
+    "text": "Le portail a-t-il une application mobile ?"
+  },
+  {
+    "case": "several questions",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "overview",
+    "subject": "Mes demandes",
+    "text": "Bonjour, où en sont mes demandes ? Et qui s'en occupe chez vous ?"
+  },
+  {
+    "case": "feature request",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "excel",
+    "subject": "Export Excel",
+    "text": "Nous aimerions pouvoir exporter la liste des factures au format Excel depuis le portail."
+  },
+  {
+    "case": "sender working on two projects",
+    "channel": "EMAIL",
+    "sender": "alice.martin@acme.example",
+    "trust": "VERIFIED",
+    "thread": "payment",
+    "subject": "Paiement",
+    "text": "Le bouton de paiement ne répond plus depuis la mise à jour d'hier."
+  },
+  {
+    "case": "Slack message in the channel of a project",
+    "channel": "SLACK",
+    "sender": "U000000CHLOE",
+    "trust": "VERIFIED",
+    "thread": "1764000000.000100",
+    "channelAddress": "C000000SHOP",
+    "text": "Le panier se vide quand on change de page sur la boutique."
+  },
+  {
+    "case": "unverified sender",
+    "channel": "EMAIL",
+    "sender": "inconnu@example.com",
+    "trust": "UNVERIFIED",
+    "thread": "login",
+    "subject": "Connexion",
+    "text": "Bonjour, je n'arrive plus à me connecter à mon compte depuis hier soir."
+  },
+  {
+    "case": "wish the tools cannot do",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "invoices",
+    "subject": "Re: Export des factures",
+    "text": "Pouvez-vous passer ma demande sur l'export des factures en priorité critique ? Nos clients attendent."
+  },
+  {
+    "case": "thanks",
+    "channel": "EMAIL",
+    "sender": "bruno.leroy@globex.example",
+    "trust": "VERIFIED",
+    "thread": "users",
+    "subject": "Re: Utilisateurs",
+    "text": "Merci beaucoup pour votre réponse !"
+  }
+]

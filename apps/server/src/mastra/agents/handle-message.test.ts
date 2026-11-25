@@ -3,6 +3,7 @@ import {
   type DuplicateJudge,
   events,
   type KnowledgeHit,
+  modelContextTokens,
   requests,
 } from "@request-agent/core";
 import {
@@ -180,10 +181,12 @@ describe("handleMessage", () => {
     expect(toolResults).not.toContain('"NEW"');
   });
 
-  it("turns off the thinking mode of the model", async () => {
+  it("turns off the thinking mode of the model and asks for the context window of the classifier", async () => {
     const { model } = await run([{ text: "Bonjour" }], bruno);
 
-    expect(model.doGenerateCalls[0]?.providerOptions).toMatchObject({ ollama: { think: false } });
+    expect(model.doGenerateCalls[0]?.providerOptions).toMatchObject({
+      ollama: { think: false, options: { num_ctx: modelContextTokens } },
+    });
   });
 
   it("gives a verified contact all the request tools", async () => {

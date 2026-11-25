@@ -223,4 +223,4 @@ export {
   type StoredFileRow,
   type StoredFiles,
 } from "./admin/files.ts";
-export { ollamaHeaders } from "./classification/ollama.ts";
+export { modelContextTokens, ollamaHeaders } from "./classification/ollama.ts";

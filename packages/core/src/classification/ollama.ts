@@ -18,6 +18,13 @@ export function ollamaHeaders(apiKey: string | undefined): Record<string, string
     : { "content-type": "application/json", authorization: `Bearer ${apiKey}` };
 }
 
+// Tokens of text the model reads and writes in one call, sent with every call to the chat model,
+// by the classifier and by the agent. Without it, Ollama picks a window from the memory of the
+// machine, 4096 tokens on a CPU, which the requests of the agent overflow: the model then stops
+// writing in the middle of its answer. Ollama loads the model again when the window changes, so
+// every call must send the same one. docs/agent.md tells how it is measured.
+export const modelContextTokens = 8192;
+
 export type Logprobs = { token: string; logprob: number }[];
 
 const responseSchema = z.object({
@@ -42,7 +49,7 @@ export async function askOllama(
       think: false,
       format: request.format,
       logprobs: true,
-      options: { temperature: 0 },
+      options: { temperature: 0, num_ctx: modelContextTokens },
       messages: [
         { role: "system", content: request.system },
         { role: "user", content: request.user },

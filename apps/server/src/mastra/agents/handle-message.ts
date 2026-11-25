@@ -58,8 +58,11 @@ export interface AgentRun {
   messageId: string;
   // Calls to the model that returned, the answers written again after a rejection included.
   modelCalls: number;
-  // The limit that ended the run before the model wrote its answer, if any.
-  cutBy: "step-limit" | "time-limit" | undefined;
+  // Answers of the model the answer check rejected. Each one costs a call the step limit does
+  // not count.
+  rejectedAnswers: number;
+  // The limit that stopped the model before it wrote its whole answer, if any.
+  cutBy: "step-limit" | "time-limit" | "context-window" | undefined;
 }
 
 export interface HandledMessage {
@@ -192,12 +195,17 @@ function finalReply(
 
 // A run ends with tool calls only at the step limit or after a question to the sender, which is
 // the answer itself. Mastra ends a run stopped by its abort signal as "aborted", without an error.
+// A call ends with "length" when the context window is full: the model stopped in the middle of
+// what it wrote.
 function limitThatCut(
   result: Awaited<ReturnType<Agent["generate"]>>,
   outcomes: ToolOutcome[],
 ): AgentRun["cutBy"] {
   if (result.finishReason === "aborted") {
     return "time-limit";
+  }
+  if (result.steps.some((step) => step.finishReason === "length")) {
+    return "context-window";
   }
   const last = result.steps.at(-1);
   if (last !== undefined && last.toolCalls.length > 0 && !askedForDetails(outcomes)) {
@@ -236,6 +244,7 @@ export async function handleMessage(
   }
   const outcomes: ToolOutcome[] = [];
   const system = await describeTurn(db, turn);
+  let rejectedAnswers = 0;
   const result = await agent.generate(wrapUntrusted(turn.messageText), {
     system,
     toolsets: {
@@ -245,13 +254,21 @@ export async function handleMessage(
     },
     maxSteps: maxAgentSteps,
     stopWhen: () => askedForDetails(outcomes),
-    outputProcessors: [createAnswerCheck(() => answerContext(system, turn.messageText, outcomes))],
+    outputProcessors: [
+      createAnswerCheck(
+        () => answerContext(system, turn.messageText, outcomes),
+        () => {
+          rejectedAnswers += 1;
+        },
+      ),
+    ],
     maxProcessorRetries: maxAnswerRetries,
     abortSignal: AbortSignal.timeout(settings.agentTimeoutMs),
   });
   settings.onAgentRun?.({
     messageId: turn.messageId,
     modelCalls: result.steps.length,
+    rejectedAnswers,
     cutBy: limitThatCut(result, outcomes),
   });
 

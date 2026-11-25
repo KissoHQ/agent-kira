@@ -2,7 +2,9 @@ import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 
 type ToolCall = { tool: string; input: unknown };
 // A step calls tools, possibly writing some text next to them as models do, or only writes text.
-export type ScriptedStep = { toolCalls: ToolCall[]; text?: string } | { text: string };
+// A text step ends with "length" when the context window filled before the model ended it.
+export type ScriptedStep =
+  { toolCalls: ToolCall[]; text?: string } | { text: string; finishReason?: "stop" | "length" };
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 
@@ -10,7 +12,7 @@ function toResult(step: ScriptedStep, index: number) {
   if (!("toolCalls" in step)) {
     return {
       content: [{ type: "text" as const, text: step.text }],
-      finishReason: "stop" as const,
+      finishReason: step.finishReason ?? "stop",
       usage,
       warnings: [],
     };

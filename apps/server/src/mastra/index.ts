@@ -68,8 +68,9 @@ const handler = () => {
     },
     (run) => {
       // Expected for a message that makes the agent loop. Frequent cuts mean the limits do not fit
-      // the machine that runs Ollama: docs/agent.md tells how to measure them again.
-      logger.warn("The agent was stopped by a limit before it answered", {
+      // the machine that runs Ollama, or the context window the prompts of the agent: docs/agent.md
+      // tells how to measure them again.
+      logger.warn("The agent was stopped by a limit before it ended its answer", {
         messageId: run.messageId,
         limit: run.cutBy,
         modelCalls: run.modelCalls,

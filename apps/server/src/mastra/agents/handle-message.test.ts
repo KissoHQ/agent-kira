@@ -100,7 +100,7 @@ describe("handleMessage", () => {
     const { result, runs, messageId } = await run([], bruno, { model: silent, agentTimeoutMs: 50 });
 
     expect(performance.now() - started).toBeLessThan(5000);
-    expect(runs).toEqual([{ messageId, modelCalls: 0, cutBy: "time-limit" }]);
+    expect(runs).toEqual([{ messageId, modelCalls: 0, rejectedAnswers: 0, cutBy: "time-limit" }]);
     expect(result).toEqual({
       reply:
         "Votre message est enregistré sous la référence REQ-0001. Une personne de l'équipe va le traiter.",
@@ -260,7 +260,9 @@ describe("handleMessage", () => {
     );
 
     expect(model.doGenerateCalls).toHaveLength(maxAgentSteps);
-    expect(runs).toEqual([{ messageId, modelCalls: maxAgentSteps, cutBy: "step-limit" }]);
+    expect(runs).toEqual([
+      { messageId, modelCalls: maxAgentSteps, rejectedAnswers: 0, cutBy: "step-limit" },
+    ]);
   });
 
   it("lets the longest handling the instructions ask for end with the answer of the model", async () => {
@@ -295,7 +297,18 @@ describe("handleMessage", () => {
 
     expect(result).toEqual({ reply: answer, filedBySystem: false });
     expect(model.doGenerateCalls).toHaveLength(6);
-    expect(runs).toEqual([{ messageId, modelCalls: 6, cutBy: undefined }]);
+    expect(runs).toEqual([{ messageId, modelCalls: 6, rejectedAnswers: 1, cutBy: undefined }]);
+  });
+
+  it("reports a run whose answer the full context window cut", async () => {
+    const { runs, messageId } = await run(
+      [{ text: "Votre demande est enregistrée sous la", finishReason: "length" }],
+      bruno,
+    );
+
+    expect(runs).toEqual([
+      { messageId, modelCalls: 1, rejectedAnswers: 0, cutBy: "context-window" },
+    ]);
   });
 
   it("never sends an answer naming a request no tool returned, and files a message left unhandled", async () => {

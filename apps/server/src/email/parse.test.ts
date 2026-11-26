@@ -41,7 +41,7 @@ describe("parseEmail", () => {
       inReplyTo: "<answer@requests.example>",
       references: ["<first@acme.example>", "<answer@requests.example>"],
     });
-    expect(email.fullText).toContain("Quel projet ?");
+    expect(email.text).not.toContain("Quel projet ?");
   });
 
   it("reads an email that only has an HTML version", async () => {
@@ -53,6 +53,23 @@ describe("parseEmail", () => {
     );
 
     expect(email.text).toBe("Le panier se vide & le total est faux.");
+  });
+
+  it("reads a large hostile email quickly, and keeps only its beginning", async () => {
+    const hostile = [
+      { text: undefined, html: "<a".repeat(500_000) },
+      { text: undefined, html: "<script>".repeat(125_000) },
+      { text: "> a\n".repeat(250_000) },
+    ];
+    const start = performance.now();
+    const emails = await Promise.all(
+      hostile.map(async (content) => parseEmail(await rawEmail(content))),
+    );
+    // Before the cut, 80 KB of "<a" took about one second, and the time grew with its square.
+    expect(performance.now() - start).toBeLessThan(3000);
+    for (const email of emails) {
+      expect(email.text.length).toBeLessThanOrEqual(100_000);
+    }
   });
 
   it("gives a stable identity to an email without Message-ID", async () => {

@@ -1,7 +1,6 @@
 # KIRA on one server: the database, the migrations, the agent server and the web interface.
 #   docker compose -f compose.production.yaml up -d --build
-# The settings come from .env on the server, or from the file named by KIRA_ENV_FILE (see the
-# Deployment part of the README). Inside this network, the database is reached as postgres:5432:
+# The settings come from .env, next to this file (see the Deployment part of the README). Inside this network, the database is reached as postgres:5432:
 # DATABASE_URL, APP_DATABASE_URL and SERVER_DATABASE_URL name that host. The agent server and the
 # web interface listen on this machine only: a reverse proxy serves them over HTTPS. Ollama runs
 # elsewhere, at OLLAMA_BASE_URL. Each service runs once: the agent server and the web interface
@@ -36,7 +35,7 @@ services:
       context: .
       target: web
     command: ["node", "packages/core/scripts/migrate.ts"]
-    env_file: ${KIRA_ENV_FILE:-.env}
+    env_file: .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,8 +45,11 @@ services:
     build:
       context: .
       target: server
-    env_file: ${KIRA_ENV_FILE:-.env}
+    env_file: .env
+    # Set here, after .env, so a line left empty in .env cannot make it listen inside the container
+    # only, where the published port does not reach.
     environment:
+      MASTRA_HOST: 0.0.0.0
       ATTACHMENTS_DIR: /data/attachments
     volumes:
       - attachments:/data/attachments
@@ -66,8 +68,9 @@ services:
     build:
       context: .
       target: web
-    env_file: ${KIRA_ENV_FILE:-.env}
+    env_file: .env
     environment:
+      WEB_HOST: 0.0.0.0
       ATTACHMENTS_DIR: /data/attachments
     volumes:
       # The interface only reads the files the widget stored.
@@ -82,6 +85,23 @@ services:
         limits:
           memory: 512m
     restart: unless-stopped
+
+  # The maintenance commands: first administrator, purge, erasure of a person. Started only by
+  # docker compose run, with the files of the widget writable, so an erasure deletes them.
+  tools:
+    build:
+      context: .
+      target: web
+    profiles: ["tools"]
+    env_file: .env
+    environment:
+      ATTACHMENTS_DIR: /data/attachments
+    volumes:
+      - attachments:/data/attachments
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
 
 volumes:
   postgres-data:

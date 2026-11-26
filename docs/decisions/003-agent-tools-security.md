@@ -54,7 +54,7 @@ A verified sender who is a known contact gets the thirteen tools, limited by the
 
 ## Database rights
 
-The application connects with the `request_agent_app` role, created by the migrations. It can read, add and update rows. It cannot delete rows, empty a table, change the schema or change the history. The owner role is only used by the migrations and the demo data. Tested on PostgreSQL 18.6 with the project schema, and checked by the tests.
+The web interface connects with the `request_agent_app` role and the agent server with the `request_agent_server` role, both created by the migrations. `request_agent_app` can read, add and update rows, and delete only the links between projects, people and channels. `request_agent_server` gets only the tables and columns the agent needs, and nothing on the accounts of the team. Neither can empty a table, change the schema or change the history. The owner role is only used by the migrations, the maintenance commands and the demo data. Tested on PostgreSQL 18.6 with the project schema, and checked by the tests.
 
 ## Consequences
 

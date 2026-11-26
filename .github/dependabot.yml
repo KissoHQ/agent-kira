@@ -1,5 +1,5 @@
-# Proposes updates of the dependencies and of the pinned actions once a week, so a fixed security
-# advisory does not wait for someone to look.
+# Proposes updates of the dependencies, of the pinned actions and of the pinned images once a
+# week, so a fixed security advisory does not wait for someone to look.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -8,6 +8,16 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # The images pinned by digest: the Node.js base of Dockerfile, and PostgreSQL and the mail server
+  # of the Compose files.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly

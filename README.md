@@ -1,4 +1,4 @@
-# Request-agent
+# agent-kira
 
 Multi-channel AI agent that centralizes requests about the company's projects. It receives messages from Slack and from a dedicated mailbox, understands them, classifies them and stores them as structured requests that can be found, followed and updated. The agent core is built with [Mastra](https://mastra.ai) and runs on a local language model through [Ollama](https://ollama.com).
 
@@ -69,8 +69,8 @@ The `ornith:9b` model takes 5.6 GB and needs about 6 GB of free RAM. The embeddi
 ## Installation
 
 ```bash
-git clone git@github.com:Alvi16/Request-agent.git
-cd Request-agent
+git clone git@github.com:KissoHQ/agent-kira.git
+cd agent-kira
 
 nvm install 26.12.1
 nvm use
@@ -143,7 +143,7 @@ pnpm db:up
 
 The database keeps its data in a Docker volume. `pnpm db:down` stops both without deleting it. The local mail server keeps emails in memory only.
 
-Create the tables and the application role, then insert the fictitious demo data. Both commands can be run again safely:
+Create the tables and the two roles of the applications, then insert the fictitious demo data. Both commands can be run again safely:
 
 ```bash
 pnpm db:migrate
@@ -164,7 +164,7 @@ pnpm dev
 
 The API is available on `http://localhost:4111/api` and Mastra Studio, the built-in interface to test the agent, on `http://localhost:4111`. They have no sign-in, so they answer only requests addressed to this machine (`localhost`, `127.0.0.1`), and refuse those sent by a page of another site open in the browser.
 
-The built server (`pnpm start`) serves neither the API nor Studio: only the widget routes and `/health`. The channels call the agent inside the server and never need its API.
+The built server (`pnpm start`) serves neither the API nor Studio: only the widget routes, `/health` and `/ready`. The channels call the agent inside the server and never need its API.
 
 Production build and start:
 
@@ -185,8 +185,10 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
    | `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`                                       | Address of Ollama as the containers reach it, and the key of the proxy in front of it, if any                                          |
    | `WEB_PUBLIC_ORIGIN`, `WEB_TRUST_PROXY`                                    | Address of the interface, such as `https://kira.example.com`, and `true`                                                               |
    | `WIDGET_ALLOWED_ORIGINS`, `WIDGET_IDENTITY_SECRETS`, `WIDGET_TRUST_PROXY` | Origins and secrets of the applications that embed the widget, and `true`                                                              |
+   | `EMAIL_*`                                                                 | The real mailbox, over TLS (see [Connecting email](#connecting-email)), or removed to run without email                                |
+   | `LOCAL_MAIL_*`, `TEST_*`, `POSTGRES_PORT`                                 | Removed: they serve the local mail server, the tests and the local database only                                                       |
 
-   `MASTRA_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file.
+   `MASTRA_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file, which take precedence over `.env`.
 
 2. Build and start everything. The `migrate` service applies the migrations and sets the passwords of the roles; the agent server and the web interface start once it succeeded:
 
@@ -197,7 +199,7 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
 3. Create the first administrator:
 
    ```bash
-   docker compose -f compose.production.yaml run --rm -it web node packages/core/scripts/add-staff.ts --email dana.support@team.example --name "Dana Support" --role admin
+   docker compose -f compose.production.yaml run --rm -it tools node packages/core/scripts/add-staff.ts --email dana.support@team.example --name "Dana Support" --role admin
    ```
 
 4. Put a reverse proxy with HTTPS in front of the two services, which listen on this machine only:
@@ -213,12 +215,18 @@ KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the
 
 To update, get the new version and run the same `up` command: the migrations run first. The logs are read with `docker compose -f compose.production.yaml logs -f server web`; `LOG_LEVEL` sets their level. Mastra sends no usage statistics: `MASTRA_TELEMETRY_DISABLED` is set.
 
-Daily maintenance, such as from cron, and backups of the database and of the files of the widget:
+The maintenance commands run in the `tools` service, which `docker compose run` starts on demand, with the files of the widget writable. Daily maintenance, such as from cron, and backups of the database and of the files of the widget:
 
 ```bash
-docker compose -f compose.production.yaml run --rm web node packages/core/scripts/purge.ts
+docker compose -f compose.production.yaml run --rm tools node packages/core/scripts/purge.ts
 docker compose -f compose.production.yaml exec -T postgres pg_dump -U request_agent request_agent > kira.sql
-docker run --rm -v kira_attachments:/data:ro -v "$PWD":/backup node:26.12.1-bookworm-slim tar czf /backup/attachments.tgz -C /data .
+docker run --rm -v kira_attachments:/data:ro -v "$PWD":/backup node:26.12.1-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c tar czf /backup/attachments.tgz -C /data .
+```
+
+To erase a person on the server (see [Personal data](#personal-data)):
+
+```bash
+docker compose -f compose.production.yaml run --rm tools node packages/core/scripts/erase-contact.ts --email bruno.leroy@globex.example --confirm
 ```
 
 The agent server and the web interface each run as one container: they keep the queue of messages and the limits of sign-in and of the widget in memory.
@@ -371,7 +379,7 @@ pnpm contact:erase --email bruno.leroy@globex.example
 pnpm contact:erase --email bruno.leroy@globex.example --confirm
 ```
 
-It replaces what the person wrote and the answers they got with "[effacé à la demande de la personne]", empties the original payloads, removes the texts of their requests and the texts kept in their history, deletes their files from `ATTACHMENTS_DIR`, and replaces their name, email and Slack ID. Nothing is deleted from the history: the requests keep their type, status, project and dates. `--slack U012AB3CD` names a Slack person. An account of the team is disabled in the web interface instead.
+It replaces what the person wrote and the answers they got with "[effacé à la demande de la personne]", empties the original payloads, removes the texts of their requests and the texts kept in their history, deletes their files from `ATTACHMENTS_DIR`, and replaces their name, email and Slack ID. A file that cannot be deleted is listed with the reason, to be deleted by hand, and the command ends with an error. Nothing is deleted from the history: the requests keep their type, status, project and dates. `--slack U012AB3CD` names a Slack person. An account of the team is disabled in the web interface instead.
 
 `pnpm db:purge` deletes the sessions of the web interface that ended more than 30 days ago, and empties the original payload of the messages handled more than 365 days ago (`--source-retention-days` changes it). Their text stays. It is meant to run once a day, such as from cron.
 
@@ -389,7 +397,7 @@ It replaces what the person wrote and the answers they got with "[effacé à la 
 ## Project structure
 
 ```
-Request-agent/
+agent-kira/
 ├── apps/
 │   ├── web/                        Web interface of the team
 │   │   └── src/
@@ -397,7 +405,9 @@ Request-agent/
 │   │       ├── config.ts           Environment variables validation
 │   │       ├── listen.ts           Starts listening, and tells a busy port in plain words
 │   │       ├── app.ts              Pages, actions, sign-in and protections
+│   │       ├── admin.ts            Administration pages and the page of one's own account
 │   │       ├── sign-in-limiter.ts  Refuses sign-in for a while after repeated failures
+│   │       ├── password-checks.ts  Bounds the password checks running and waiting at once
 │   │       └── views/              Pages, rendered on the server, and their labels in French
 │   └── server/                     Mastra server
 │       ├── slack-app-manifest.yaml Settings of the Slack app
@@ -407,6 +417,8 @@ Request-agent/
 │           ├── config.ts           Environment variables validation
 │           ├── channel-handler.ts  Database and agent shared by the channel adapters
 │           ├── reliable-handling.ts  Retries, and filing for a person after the last failure
+│           ├── retry.ts            Waits before reaching again a service that is down
+│           ├── readiness.ts        /ready: database, model and channels
 │           ├── scenarios.test.ts   Email → Agent → Request and Slack → Agent → Request, end to end
 │           ├── email/
 │           │   ├── parse.ts        Reads an email: sender, thread, new text, attachments
@@ -419,6 +431,7 @@ Request-agent/
 │           │   ├── adapter.ts      Stores, queues and answers widget messages, and serves conversations
 │           │   ├── identity.ts     Identity of the person, signed by the application
 │           │   ├── files.ts        Attached files: count, size and type read from the content
+│           │   ├── admission.ts    Limits of the public widget: rate, waiting messages, uploads
 │           │   └── start.ts        Routes on the Mastra server, started when the widget is configured
 │           ├── slack/
 │           │   ├── events.ts       Which Slack events reach the agent
@@ -427,6 +440,7 @@ Request-agent/
 │           │   └── start.ts        Starts Slack with the server when it is configured
 │           └── mastra/
 │               ├── index.ts        Mastra entry point: registers the agent
+│               ├── api-guard.ts    Closes the Mastra API outside development
 │               ├── agents/
 │               │   ├── request-agent.ts   Agent and its instructions
 │               │   ├── handle-message.ts  Runs the agent on one message, with its tools
@@ -439,16 +453,25 @@ Request-agent/
 │   └── core/                       Business core, independent of any channel
 │       ├── drizzle/                SQL migrations, generated from the schema
 │       ├── eval/                   Labeled messages to measure the classifier
-│       ├── scripts/                Migration, demo data, team accounts, contacts, knowledge base and evaluation commands
+│       ├── scripts/                Migration, demo data, team accounts, contacts, knowledge base, erasure, purge and evaluation commands
 │       ├── src/
 │       │   ├── env.ts              Environment variables validation
 │       │   ├── untrusted.ts        Wraps text written by senders before a model reads it
 │       │   ├── messages/
 │       │   │   ├── inbox.ts        Stores channel messages once, with their conversation
+│       │   │   ├── conversation.ts What a conversation said, where it started, who wrote in it
 │       │   │   ├── handling.ts     Which messages are handled, and the failed attempts
 │       │   │   └── mailbox-cursor.ts  How far the agent has read its mailbox
 │       │   ├── contacts/
-│       │   │   └── save-contact.ts Registers a person who writes to the agent
+│       │   │   ├── save-contact.ts Registers a person who writes to the agent
+│       │   │   └── membership.ts   Whether a person works on a project
+│       │   ├── admin/
+│       │   │   ├── catalog.ts      Organizations, projects and their channels
+│       │   │   └── people.ts       Contacts and the projects they work on
+│       │   ├── privacy/
+│       │   │   └── erase.ts        Erasure of a person, and purge of old data
+│       │   ├── limits/
+│       │   │   └── rate-limiter.ts Requests per key in windows of time
 │       │   ├── knowledge/
 │       │   │   ├── embedder.ts     Vectors of articles and questions, from Ollama
 │       │   │   ├── articles.ts     Saves articles and finds those closest to a question
@@ -465,13 +488,16 @@ Request-agent/
 │       │   ├── db/
 │       │   │   ├── schema.ts       Data model
 │       │   │   ├── client.ts       Database connection
+│       │   │   ├── errors.ts       PostgreSQL error codes the code expects
 │       │   │   ├── migrate.ts      Migration runner
-│       │   │   ├── app-role.ts     Password of the restricted application role
+│       │   │   ├── app-role.ts     Passwords of the two restricted roles of the applications
 │       │   │   └── seed.ts         Fictitious demo data
 │       │   └── requests/
 │       │       ├── turn.ts         Sender and project of the message, computed before the model
 │       │       ├── classified-turn.ts  Classification of the message and human review rules
 │       │       ├── access.ts       The access rule applied to every operation
+│       │       ├── reference.ts    References such as REQ-0042
+│       │       ├── views.ts        What the operations return, and their results
 │       │       ├── inputs.ts       Validated inputs of the operations
 │       │       ├── commands.ts     Create, clarify, update, add a message
 │       │       ├── duplicates.ts   Candidates for a duplicate, and the check by the model
@@ -481,14 +507,19 @@ Request-agent/
 │       └── test/                   Test database setup and fixtures, shared with the apps
 ├── docs/
 │   ├── architecture.md             Parts, path of a message, adding a channel
-│   ├── demo.md                     Step-by-step demonstration of both scenarios
+│   ├── demo.md                     Step-by-step demonstration of the three scenarios
+│   ├── widget.md                   Embedding the widget in an application
 │   ├── agent.md                    How a message is handled, types, review, measured quality
 │   ├── data-model.md               Tables and their columns
 │   └── decisions/                  Technical choices and their reasons
 ├── .github/
+│   ├── workflows/ci.yml            Checks of every pull request
+│   ├── dependabot.yml              Weekly updates of dependencies, actions and images
 │   └── pull_request_template.md
 ├── .env.example                    Configuration template
 ├── compose.yaml                    Local PostgreSQL database and mail server
+├── compose.production.yaml         KIRA on one server: database, migrations, agent server, web interface
+├── Dockerfile                      Images of the agent server and of the web interface
 ├── .nvmrc                          Node.js version
 ├── .oxlintrc.json                  Lint rules
 ├── package.json                    Root scripts

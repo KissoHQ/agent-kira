@@ -1,11 +1,13 @@
-# KIRA on one server: the database, the migrations, the agent server and the web interface.
+# KIRA on one server: the database, the migrations, the server, the agent and the web interface.
 #   docker compose -f compose.production.yaml up -d --build
-# The settings come from .env, next to this file (see the Deployment part of the README). Inside this network, the database is reached as postgres:5432:
-# DATABASE_URL, APP_DATABASE_URL and SERVER_DATABASE_URL name that host. The agent server and the
-# web interface are reached through the network of Docker only, by a reverse proxy that serves them
-# over HTTPS: Traefik with Dokploy, or compose.host-proxy.yaml for a proxy installed on the server
-# itself. Ollama runs elsewhere, at OLLAMA_BASE_URL. Each service runs once: the agent server and
-# the web interface keep counts in memory.
+# The settings come from .env, next to this file (see the Deployment part of the README). Inside
+# this network, the database is reached as postgres:5432: DATABASE_URL, APP_DATABASE_URL and
+# SERVER_DATABASE_URL name that host. The widget of the server and the web interface are reached
+# through the network of Docker only, by a reverse proxy that serves them over HTTPS: Traefik with
+# Dokploy, or compose.host-proxy.yaml for a proxy installed on the server itself. The agent is
+# reached by the server only, as agent:4120. Ollama runs elsewhere, at OLLAMA_BASE_URL. Each
+# service runs once: the server and the web interface keep counts in memory, and the agent keeps
+# its sessions in its own volume.
 name: kira
 
 services:
@@ -47,18 +49,51 @@ services:
       context: .
       target: server
     env_file: .env
-    # Set here, after .env, which cannot change them. The Mastra server, which reads every JSON body
-    # whole before any check of KIRA, listens inside the container only, for its health check. The
-    # widget listens on every interface of the container, for the reverse proxy.
+    # Set here, after .env, which cannot change them. /health and /ready listen inside the container
+    # only, for its health check. The widget listens on every interface of the container, for the
+    # reverse proxy.
     environment:
-      MASTRA_HOST: 127.0.0.1
+      SERVER_HOST: 127.0.0.1
       WIDGET_HOST: 0.0.0.0
       ATTACHMENTS_DIR: /data/attachments
+      AGENT_URL: http://agent:4120
     volumes:
       - attachments:/data/attachments
     # The widget, served over HTTPS by the reverse proxy. No port of the server is opened.
     expose:
       - "4113"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      agent:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    restart: unless-stopped
+
+  # The agent, built with eve: the model and its tools. It gets only the settings it needs, not the
+  # tokens of Slack or the mailbox. No port is published: the server reaches it through the network
+  # of Docker, with AGENT_PASSWORD.
+  agent:
+    build:
+      context: .
+      target: agent
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:?OLLAMA_BASE_URL must be set in .env}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:?OLLAMA_MODEL must be set in .env}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-}
+      EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-}
+      SERVER_DATABASE_URL: ${SERVER_DATABASE_URL:?SERVER_DATABASE_URL must be set in .env}
+      AGENT_PASSWORD: ${AGENT_PASSWORD:?AGENT_PASSWORD must be set in .env}
+    volumes:
+      # The session of each message while it is handled, so a restart resumes it. eve deletes a
+      # session once its message is handled.
+      - agent-sessions:/app/.eve
+    expose:
+      - "4120"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -109,5 +144,6 @@ services:
 
 volumes:
   postgres-data:
-  # Files attached through the widget, shared by the agent server and the web interface.
+  # Files attached through the widget, shared by the server and the web interface.
   attachments:
+  agent-sessions:

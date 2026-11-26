@@ -52,7 +52,15 @@ async function fakeSlack(handle: (input: TurnInput) => Promise<HandledMessage>) 
       throw new Error(`No listener for ${type}`);
     }
     await listener({
-      event: { type, channel: "C1", ts: "1793000000.000100", user: "UALICE", ...event },
+      // A message of a member of the workspace, as Slack sends it, with its team.
+      event: {
+        type,
+        channel: "C1",
+        ts: "1793000000.000100",
+        user: "UALICE",
+        team: teamId,
+        ...event,
+      },
       ack: () => {
         acked = true;
         return Promise.resolve();
@@ -171,12 +179,54 @@ describe("startSlackAdapter", () => {
     expect(slack.handled).toHaveLength(0);
   });
 
-  it("treats a sender of another organization as unverified", async () => {
+  it("treats a sender of another organization, or of no known team, as unverified", async () => {
     const slack = await fakeSlack(answered("ok"));
 
     await slack.deliver("app_mention", { text: "<@UBOT> bonjour", user_team: "T-OTHER" });
+    await slack.deliver("app_mention", {
+      ts: "1793000001.000100",
+      text: "<@UBOT> bonjour",
+      team: undefined,
+    });
 
-    expect(slack.handled[0]?.trust).toBe("UNVERIFIED");
+    expect(slack.handled.map((input) => input.trust)).toEqual(["UNVERIFIED", "UNVERIFIED"]);
+  });
+
+  it("handles a message with a file and a reply also sent to the channel", async () => {
+    const slack = await fakeSlack(answered("ok"));
+
+    await slack.deliver("message", {
+      channel_type: "im",
+      subtype: "file_share",
+      text: "voici la capture",
+    });
+    await slack.deliver("message", {
+      channel_type: "im",
+      ts: "1793000001.000100",
+      subtype: "thread_broadcast",
+      text: "et aussi ceci",
+    });
+
+    expect(slack.handled).toHaveLength(2);
+  });
+
+  it("does not handle a colleague who answers in a followed thread without naming the agent", async () => {
+    const slack = await fakeSlack(answered("ok"));
+    await slack.deliver("app_mention", { text: "<@UBOT> le panier se vide" });
+
+    await slack.deliver("message", {
+      user: "UTEAMMATE",
+      ts: "1793000002.000100",
+      thread_ts: "1793000000.000100",
+      text: "Je regarde ça cet après-midi.",
+    });
+    await slack.deliver("message", {
+      ts: "1793000003.000100",
+      thread_ts: "1793000000.000100",
+      text: "C'est sur le SHOP.",
+    });
+
+    expect(slack.handled).toHaveLength(2);
   });
 
   it("posts nothing when no answer is needed, such as for thanks", async () => {

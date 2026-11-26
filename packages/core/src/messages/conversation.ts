@@ -136,3 +136,30 @@ export async function conversationSenderDomains(
     .where(and(eq(messages.conversationId, conversationId), eq(messages.direction, "INBOUND")));
   return [...new Set(rows.map((row) => row.sender.slice(row.sender.lastIndexOf("@") + 1)))];
 }
+
+// Whether this sender already wrote in the conversation. In a thread the agent follows, a message
+// of someone who never wrote to it, such as a colleague of the team answering the client, is not
+// handled as a new message to the agent.
+export async function hasWrittenIn(
+  db: Database,
+  channel: Channel,
+  externalId: string,
+  sender: string,
+): Promise<boolean> {
+  const conversationId = await findConversation(db, channel, externalId);
+  if (conversationId === undefined) {
+    return false;
+  }
+  const [row] = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.direction, "INBOUND"),
+        eq(messages.sender, sender),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}

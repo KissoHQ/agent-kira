@@ -137,21 +137,6 @@ export function storeOutboundMessage(
   return storeMessage(db, message, "OUTBOUND");
 }
 
-// Whether the system already follows this conversation, such as a Slack thread the agent took part in.
-export async function isKnownConversation(
-  db: Database,
-  channel: Channel,
-  conversationExternalId: string,
-): Promise<boolean> {
-  const [conversation] = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(
-      and(eq(conversations.channel, channel), eq(conversations.externalId, conversationExternalId)),
-    );
-  return conversation !== undefined;
-}
-
 // The conversation a message belongs to, found by the message's ID on its channel. A reply names
 // the message it answers, and this gives the thread to attach it to.
 export async function conversationOfMessage(

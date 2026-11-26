@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { Database } from "../db/client.ts";
 import { contacts, messages, projectChannels, projectContacts, projects } from "../db/schema.ts";
@@ -47,14 +47,20 @@ async function resolveActor(
     channel === "SLACK"
       ? eq(contacts.slackUserId, sender)
       : eq(contacts.email, sender.toLowerCase());
-  const [contact] = await db.select({ id: contacts.id }).from(contacts).where(identity);
+  // A disabled contact, such as a person who left the client, is treated as an unknown sender.
+  const [contact] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(identity, isNull(contacts.disabledAt)));
   if (contact === undefined) {
     return { kind: "anonymous" };
   }
+  // An archived project is no longer one the contact works on: nothing new is filed under it.
   const links = await db
     .select({ projectId: projectContacts.projectId })
     .from(projectContacts)
-    .where(eq(projectContacts.contactId, contact.id));
+    .innerJoin(projects, eq(projects.id, projectContacts.projectId))
+    .where(and(eq(projectContacts.contactId, contact.id), isNull(projects.archivedAt)));
   return {
     kind: "contact",
     contactId: contact.id,
@@ -74,7 +80,14 @@ async function findDedicatedProject(
   const [link] = await db
     .select({ projectId: projectChannels.projectId })
     .from(projectChannels)
-    .where(and(eq(projectChannels.channel, channel), eq(projectChannels.externalId, address)));
+    .innerJoin(projects, eq(projects.id, projectChannels.projectId))
+    .where(
+      and(
+        eq(projectChannels.channel, channel),
+        eq(projectChannels.externalId, address),
+        isNull(projects.archivedAt),
+      ),
+    );
   return link?.projectId;
 }
 

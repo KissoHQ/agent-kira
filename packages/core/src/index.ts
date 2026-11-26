@@ -121,6 +121,8 @@ export {
 export { assessDuplicate, findDuplicateCandidates } from "./requests/duplicates.ts";
 export {
   listReviewQueue,
+  reviewPageSize,
+  type ReviewQueuePage,
   markDuplicate,
   markDuplicateInput,
   reviewRequest,
@@ -146,12 +148,55 @@ export {
 } from "./requests/console.ts";
 export {
   authenticateStaff,
+  changeOwnPassword,
+  listStaff,
   minPasswordLength,
+  passwordInput,
   saveStaffAccount,
+  setStaffDisabled,
+  setStaffPassword,
+  setStaffRole,
   staffAccountInput,
   type StaffAccountInput,
   type StaffMember,
+  type StaffRole,
+  type StaffRow,
 } from "./staff/accounts.ts";
-export { closeSession, findSession, openSession, sessionDurationMs } from "./staff/sessions.ts";
+export {
+  closeSession,
+  closeSessionsOf,
+  findSession,
+  openSession,
+  sessionDurationMs,
+  sessionIdleMs,
+} from "./staff/sessions.ts";
 export { worksOnProjectByEmail } from "./contacts/membership.ts";
 export { type Admission, createRateLimiter, type RateLimit } from "./limits/rate-limiter.ts";
+export {
+  addChannelLink,
+  channelLinkInput,
+  type ChannelLinkInput,
+  type ChannelLinkRow,
+  listChannelLinks,
+  listOrganizations,
+  listProjectRows,
+  organizationInput,
+  type OrganizationInput,
+  type OrganizationRow,
+  projectInput,
+  type ProjectInput,
+  type ProjectRow,
+  removeChannelLink,
+  saveOrganization,
+  saveProject,
+  setOrganizationArchived,
+  setProjectArchived,
+} from "./admin/catalog.ts";
+export {
+  contactAdminInput,
+  type ContactAdminInput,
+  type ContactRow,
+  listContactRows,
+  saveContactRow,
+  setContactDisabled,
+} from "./admin/people.ts";

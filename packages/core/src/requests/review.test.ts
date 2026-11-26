@@ -12,7 +12,13 @@ import {
   fileUnhandledMessage,
   forwardToTeam,
 } from "./commands.ts";
-import { listReviewQueue, markDuplicate, type Reviewer, reviewRequest } from "./review.ts";
+import {
+  listReviewQueue,
+  markDuplicate,
+  type Reviewer,
+  reviewPageSize,
+  reviewRequest,
+} from "./review.ts";
 import { prepareTurn } from "./turn.ts";
 
 const getDatabase = useTestDatabase();
@@ -58,8 +64,9 @@ describe("listReviewQueue", () => {
 
     const queue = await listReviewQueue(getAppDatabase());
 
-    expect(queue.map((item) => item.request.reference)).toEqual([first, second]);
-    expect(queue[0]?.reasons).toEqual(["PROJECT_AMBIGUOUS", "UNHANDLED"]);
+    expect(queue.items.map((item) => item.request.reference)).toEqual([first, second]);
+    expect(queue.items[0]?.reasons).toEqual(["PROJECT_AMBIGUOUS", "UNHANDLED"]);
+    expect(queue).toMatchObject({ total: 2, page: 1 });
   });
 
   it("adds a question passed to the team since the last review to the reasons", async () => {
@@ -73,15 +80,51 @@ describe("listReviewQueue", () => {
     await addMessageToRequest(getAppDatabase(), followUp, { reference });
     await forwardToTeam(getAppDatabase(), followUp, { question: "Quand est-ce prévu ?" });
 
-    const [waiting] = await listReviewQueue(getAppDatabase());
+    const [waiting] = (await listReviewQueue(getAppDatabase())).items;
     await reviewRequest(getAppDatabase(), reviewer, { reference, changes: {} });
 
     expect(waiting).toMatchObject({ request: { reference }, reasons: ["QUESTION_FOR_TEAM"] });
-    expect(await listReviewQueue(getAppDatabase())).toEqual([]);
+    expect((await listReviewQueue(getAppDatabase())).items).toEqual([]);
+  });
+});
+
+describe("listReviewQueue, a page at a time", () => {
+  it("shows every waiting request across pages, oldest first", async () => {
+    const references: string[] = [];
+    for (let index = 0; index < reviewPageSize + 1; index += 1) {
+      // Filed one after the other, so their order is known.
+      // oxlint-disable-next-line no-await-in-loop
+      references.push(await reviewedLater());
+    }
+
+    const first = await listReviewQueue(getAppDatabase());
+    const second = await listReviewQueue(getAppDatabase(), 2);
+
+    expect(first.total).toBe(reviewPageSize + 1);
+    expect(first.items).toHaveLength(reviewPageSize);
+    expect(second.items.map((item) => item.request.reference)).toEqual([references.at(-1)]);
   });
 });
 
 describe("reviewRequest", () => {
+  it("refuses a review made on a request that changed since the person opened it", async () => {
+    const reference = await reviewedLater();
+    const [seen] = await getDatabase().select({ updatedAt: requests.updatedAt }).from(requests);
+    const version = seen?.updatedAt.toISOString() ?? "";
+    // The agent adds a message meanwhile.
+    await getDatabase().update(requests).set({ summary: "Nouveau message" });
+
+    expect(
+      await reviewRequest(getAppDatabase(), reviewer, {
+        reference,
+        changes: { status: "CLOSED" },
+        version,
+      }),
+    ).toEqual({ ok: false, error: "CHANGED" });
+    const [current] = await getDatabase().select().from(requests);
+    expect(current?.status).toBe("NEW");
+  });
+
   it("takes the request out of the queue with the corrections, recorded as a person's action", async () => {
     const reference = await reviewedLater();
 
@@ -99,7 +142,7 @@ describe("reviewRequest", () => {
         status: "IN_PROGRESS",
       },
     });
-    expect(await listReviewQueue(getAppDatabase())).toEqual([]);
+    expect((await listReviewQueue(getAppDatabase())).items).toEqual([]);
     const history = await getDatabase().select().from(events).where(eq(events.actorType, "HUMAN"));
     expect(history.map((event) => [event.type, event.actorContactId])).toEqual([
       ["STATUS_CHANGED", reviewer.contactId],
@@ -209,7 +252,7 @@ describe("unclassified messages", () => {
       projectKey: "PORTAL",
       title: "Le portail plante.",
     });
-    const [item] = await listReviewQueue(getAppDatabase());
+    const [item] = (await listReviewQueue(getAppDatabase())).items;
     expect(item?.reasons).toEqual(["LOW_CONFIDENCE", "UNHANDLED"]);
   });
 });

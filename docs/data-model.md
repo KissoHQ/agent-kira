@@ -31,23 +31,25 @@ A message arrives in a conversation (a Slack thread or an email thread). The age
 
 A client or internal company.
 
-| Column         | Description                                                                     |
-| -------------- | ------------------------------------------------------------------------------- |
-| `name`         | Name of the organization                                                        |
-| `email_domain` | Domain of its email addresses, such as `acme.example`. Unique, always lowercase |
+| Column         | Description                                                                             |
+| -------------- | --------------------------------------------------------------------------------------- |
+| `name`         | Name of the organization                                                                |
+| `email_domain` | Domain of its email addresses, such as `acme.example`. Unique, always lowercase         |
+| `archived_at`  | When the client left. Archiving it also archives its projects and disables its contacts |
 
 ### `contacts`
 
 A person who writes to the agent.
 
-| Column            | Description                             |
-| ----------------- | --------------------------------------- |
-| `organization_id` | Organization of the contact             |
-| `name`, `role`    | Name and role, when known               |
-| `email`           | Email address. Unique, always lowercase |
-| `slack_user_id`   | Slack user ID. Unique                   |
+| Column            | Description                                                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `organization_id` | Organization of the contact                                                                                                        |
+| `name`, `role`    | Name and role, when known                                                                                                          |
+| `email`           | Email address. Unique, always lowercase                                                                                            |
+| `slack_user_id`   | Slack user ID. Unique                                                                                                              |
+| `disabled_at`     | When the contact was disabled, such as a person who left the client. Their messages are then treated as those of an unknown sender |
 
-A contact has at least an email address or a Slack user ID.
+A contact has at least an email address or a Slack user ID. An administrator manages the contacts, their projects and their Slack ID in the web interface, under Administration.
 
 A real person who writes by email is registered, with their organization and projects, by:
 
@@ -61,20 +63,21 @@ pnpm contact:add --email emma.petit@example.com --name "Emma Petit" --organizati
 
 A project followed by the company.
 
-| Column            | Description                                                             |
-| ----------------- | ----------------------------------------------------------------------- |
-| `key`             | Short code used by people, such as `SHOP`: 2 to 10 uppercase characters |
-| `name`            | Full name                                                               |
-| `description`     | What the project is about                                               |
-| `organization_id` | Client organization                                                     |
+| Column            | Description                                                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `key`             | Short code used by people, such as `SHOP`: 2 to 10 uppercase characters                                                                                |
+| `name`            | Full name                                                                                                                                              |
+| `description`     | What the project is about                                                                                                                              |
+| `organization_id` | Client organization                                                                                                                                    |
+| `archived_at`     | When the project ended. An archived project is no longer identified for a message, and its contacts no longer reach it; its requests stay for the team |
 
 ### `project_contacts`
 
-Who works on which project, with an optional `role`. When the sender of a message works on several projects, the project is ambiguous: the agent must not choose one at random.
+Who works on which project, with an optional `role`. When the sender of a message works on several projects, the project is ambiguous: the agent must not choose one at random. Unlike the history, these links can be removed, by an administrator.
 
 ### `project_channels`
 
-A Slack channel, an email address or a widget dedicated to one project (`channel`, `external_id`; for a widget, the project key it is embedded with). A message received there belongs to that project, without asking the language model.
+A Slack channel, an email address or a widget dedicated to one project (`channel`, `external_id`; for a widget, the project key it is embedded with). A message received there belongs to that project, without asking the language model. An administrator adds and removes them in the web interface.
 
 ### `conversations`
 
@@ -107,6 +110,7 @@ A message received or sent, on any channel.
 | `received_at`       | When the system received it                                                                                         |
 | `handled_at`        | When the system finished with an inbound message. Empty while it waits to be handled, so a restart handles it again |
 | `handling_attempts` | Failed attempts to handle the message                                                                               |
+| `pending_reply`     | The answer to an inbound message, kept from the moment it is handled until the channel has sent it                  |
 
 A message is stored only once for a given channel and external ID, so an email processed twice does not create a second request.
 
@@ -155,24 +159,26 @@ Events can only be added. A database trigger rejects any update or deletion, so 
 
 The account of a member of the team on the web interface. It belongs to a contact, so the history names the person who reviewed or changed a request.
 
-| Column          | Description                                                       |
-| --------------- | ----------------------------------------------------------------- |
-| `contact_id`    | The contact of the person. One account per contact                |
-| `password_hash` | Argon2id hash of the password, with its parameters and salt       |
-| `disabled_at`   | When the account was disabled. It can then no longer be signed in |
+| Column          | Description                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `contact_id`    | The contact of the person. One account per contact                                                                 |
+| `password_hash` | Argon2id hash of the password, with its parameters and salt                                                        |
+| `role`          | `ADMIN`, who manages the clients, projects, contacts, channels and accounts, or `MEMBER`, who handles the requests |
+| `disabled_at`   | When the account was disabled. It can then no longer be signed in, and its sessions end                            |
 
-Accounts are created or given a new password with `pnpm staff:add`, which enables the account again.
+The first administrator is created with `pnpm staff:add --role admin`. The other accounts are managed by an administrator in the web interface. A new password, given by the command or by an administrator, ends every session of the person; it never enables a disabled account again. At least one enabled administrator always remains.
 
 ### `staff_sessions`
 
 A signed-in session of the web interface.
 
-| Column       | Description                                                             |
-| ------------ | ----------------------------------------------------------------------- |
-| `contact_id` | The account of the session                                              |
-| `token_hash` | SHA-256 hash of the token kept in the cookie. The token is never stored |
-| `expires_at` | End of the session, 8 hours after it was opened                         |
-| `revoked_at` | When the person signed out                                              |
+| Column         | Description                                                             |
+| -------------- | ----------------------------------------------------------------------- |
+| `contact_id`   | The account of the session                                              |
+| `token_hash`   | SHA-256 hash of the token kept in the cookie. The token is never stored |
+| `expires_at`   | End of the session, 8 hours after it was opened                         |
+| `revoked_at`   | When the person signed out, or when all their sessions were ended       |
+| `last_seen_at` | Last use of the session. A session not used for 1 hour ends             |
 
 Rows are never deleted, since the application role cannot delete: a session that signed out is marked as revoked.
 

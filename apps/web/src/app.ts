@@ -30,6 +30,7 @@ import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 
+import { registerAdministration } from "./admin.ts";
 import { createCheckQueue } from "./password-checks.ts";
 import {
   type Admission,
@@ -58,12 +59,16 @@ export interface WebAppOptions {
   attachmentsDir?: string;
 }
 
-type Env = {
+export type WebEnv = {
   Bindings: Partial<HttpBindings>;
   Variables: { staff: StaffMember; sessionToken: string };
 };
+type Env = WebEnv;
 
+// Sent as __Host-session: the browser then refuses one set by another site of the same domain, or
+// for a narrower path, so nobody can make a person work in a session they chose.
 const sessionCookie = "session";
+const cookiePrefix = "host";
 const invalidCredentials = "E-mail ou mot de passe incorrect.";
 const busy = "Trop de connexions en cours. Réessayez dans quelques secondes.";
 const busyRetryAfterSeconds = 5;
@@ -91,6 +96,11 @@ const maxEmailLength = 254;
 
 const isNotice = (value: string): value is Notice => Object.hasOwn(notices, value);
 
+// The request changed between the moment the person opened it and their action: the page shows it
+// again as it is now, so they decide on what they see.
+const changedMeanwhile =
+  "La demande a changé pendant que vous la consultiez : vérifiez-la ci-dessous, puis recommencez.";
+
 const duplicateErrors = {
   NOT_FOUND: "Demande d'origine introuvable.",
   SAME_REQUEST: "Une demande ne peut pas être le doublon d'elle-même.",
@@ -107,7 +117,8 @@ function contentDisposition(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
-// The content of a stored file, or undefined when it is missing or files are not kept.
+// The content of a stored file, or undefined when it is missing or files are not kept. Any other
+// failure, such as a folder the server cannot read, is an error, not a missing file.
 async function readStoredFile(
   folder: string | undefined,
   ref: string,
@@ -117,8 +128,18 @@ async function readStoredFile(
   }
   return readFile(join(folder, ref)).then(
     (buffer) => new Uint8Array(buffer),
-    () => undefined,
+    (error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    },
   );
+}
+
+// The page to go back to after signing in: only a path of this site, never another site.
+function safeNext(value: string | undefined): string {
+  return value !== undefined && /^\/(?![/\\])/.test(value) ? value : "/";
 }
 
 // Empty form fields leave a value unchanged.
@@ -139,11 +160,16 @@ export function createWebApp(options: WebAppOptions) {
   const render = (
     c: Context<Env>,
     fragment: Fragment,
-    status: 200 | 400 | 401 | 404 | 429 | 503 = 200,
+    status: 200 | 400 | 401 | 403 | 404 | 409 | 429 | 503 = 200,
   ) => c.html(fragment, status);
-  const refuse = (c: Context<Env>, admission: Admission & { allowed: false }, email: string) => {
+  const refuse = (
+    c: Context<Env>,
+    admission: Admission & { allowed: false },
+    email: string,
+    next: string,
+  ) => {
     c.header("Retry-After", String(Math.ceil(admission.retryAfterMs / 1000)));
-    return render(c, signInPage(tooManyAttempts(admission.retryAfterMs), email), 429);
+    return render(c, signInPage(tooManyAttempts(admission.retryAfterMs), email, next), 429);
   };
 
   // Only the script and stylesheet of this site: nothing inline and no resource from elsewhere
@@ -183,24 +209,25 @@ export function createWebApp(options: WebAppOptions) {
     c.body(script, 200, { "Content-Type": "text/javascript; charset=utf-8" }),
   );
 
-  app.get("/login", (c) => render(c, signInPage()));
+  app.get("/login", (c) => render(c, signInPage(undefined, "", safeNext(c.req.query("next")))));
   app.post("/login", async (c) => {
     const form = await c.req.parseBody();
     const email = formValue(form, "email") ?? "";
     const password = formValue(form, "password") ?? "";
+    const next = safeNext(formValue(form, "next"));
     if (email.length > maxEmailLength) {
-      return render(c, signInPage(invalidCredentials), 401);
+      return render(c, signInPage(invalidCredentials, "", next), 401);
     }
     // Both an account and a network address get a few attempts: the first stops guessing one
     // password, the second stops trying a few passwords on every account.
     const address = clientAddress(c, trustProxy);
     const byAddress = addressLimiter.begin(address);
     if (!byAddress.allowed) {
-      return refuse(c, byAddress, email);
+      return refuse(c, byAddress, email, next);
     }
     const byEmail = emailLimiter.begin(email);
     if (!byEmail.allowed) {
-      return refuse(c, byEmail, email);
+      return refuse(c, byEmail, email, next);
     }
     const check = await passwordChecks.run(() => authenticateStaff(db, email, password));
     if (!check.ran) {
@@ -208,32 +235,43 @@ export function createWebApp(options: WebAppOptions) {
       addressLimiter.giveBack(address);
       emailLimiter.giveBack(email);
       c.header("Retry-After", String(busyRetryAfterSeconds));
-      return render(c, signInPage(busy, email), 503);
+      return render(c, signInPage(busy, email, next), 503);
     }
     const staff = check.value;
     if (staff === undefined) {
-      return render(c, signInPage(invalidCredentials, email), 401);
+      return render(c, signInPage(invalidCredentials, email, next), 401);
     }
     emailLimiter.clear(email);
     addressLimiter.giveBack(address);
+    // A session the browser still held ends: signing in always starts a new one.
+    const previous = getCookie(c, sessionCookie, cookiePrefix);
+    if (previous !== undefined) {
+      await closeSession(db, previous);
+    }
     const { token, expiresAt } = await openSession(db, staff.contactId);
     // Browsers keep Secure cookies over https, and on localhost except Safari.
     setCookie(c, sessionCookie, token, {
+      prefix: cookiePrefix,
       httpOnly: true,
       secure: true,
       sameSite: "Lax",
       path: "/",
       expires: expiresAt,
     });
-    return c.redirect("/", 303);
+    return c.redirect(next, 303);
   });
 
   // Every other page needs an open session.
   app.use(async (c, next) => {
-    const token = getCookie(c, sessionCookie);
+    const token = getCookie(c, sessionCookie, cookiePrefix);
     const staff = token === undefined ? undefined : await findSession(db, token);
     if (token === undefined || staff === undefined) {
-      return c.req.method === "GET" ? c.redirect("/login", 303) : c.text("Unauthorized", 401);
+      // After signing in again, the person comes back to the page they asked for. A form sent
+      // after the session ended cannot be replayed: they come back to the page it was sent from.
+      const back =
+        c.req.method === "GET" ? new URL(c.req.url).pathname + new URL(c.req.url).search : "/";
+      const query = back === "/" ? "" : `?next=${encodeURIComponent(back)}`;
+      return c.redirect(`/login${query}`, 303);
     }
     c.set("staff", staff);
     c.set("sessionToken", token);
@@ -242,7 +280,7 @@ export function createWebApp(options: WebAppOptions) {
 
   app.post("/logout", async (c) => {
     await closeSession(db, c.get("sessionToken"));
-    deleteCookie(c, sessionCookie, { path: "/", secure: true });
+    deleteCookie(c, sessionCookie, { prefix: cookiePrefix, path: "/", secure: true });
     return c.redirect("/login", 303);
   });
 
@@ -258,12 +296,21 @@ export function createWebApp(options: WebAppOptions) {
     return render(c, requestListPage(view(c), filters.data, result, projects));
   });
 
-  app.get("/review", async (c) => render(c, reviewQueuePage(view(c), await listReviewQueue(db))));
+  app.get("/review", async (c) => {
+    const pageNumber = z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .catch(1)
+      .parse(c.req.query("page"));
+    return render(c, reviewQueuePage(view(c), await listReviewQueue(db, pageNumber)));
+  });
 
   const showRequest = async (
     c: Context<Env>,
     feedback: { notice?: Notice; error?: string },
-    status: 200 | 400 = 200,
+    status: 200 | 400 | 409 = 200,
   ) => {
     const reference = c.req.param("reference") ?? "";
     const [record, projects] = await Promise.all([
@@ -316,14 +363,18 @@ export function createWebApp(options: WebAppOptions) {
         projectKey: formValue(form, "projectKey"),
         status: formValue(form, "status"),
       },
+      version: formValue(form, "version"),
     });
     if (!input.success) {
       return showRequest(c, { error: "Valeurs invalides." }, 400);
     }
     const result = await reviewRequest(db, { contactId: c.get("staff").contactId }, input.data);
     if (!result.ok) {
-      return result.error === "NOT_FOUND"
-        ? c.text("Request not found", 404)
+      if (result.error === "NOT_FOUND") {
+        return c.text("Request not found", 404);
+      }
+      return result.error === "CHANGED"
+        ? showRequest(c, { error: changedMeanwhile }, 409)
         : showRequest(c, { error: "Projet inconnu." }, 400);
     }
     return done(c, result.value.reference, "reviewed");
@@ -350,6 +401,7 @@ export function createWebApp(options: WebAppOptions) {
     const input = changeStatusInput.safeParse({
       reference: c.req.param("reference"),
       status: formValue(form, "status"),
+      version: formValue(form, "version"),
     });
     if (!input.success) {
       return showRequest(c, { error: "Statut invalide." }, 400);
@@ -360,10 +412,14 @@ export function createWebApp(options: WebAppOptions) {
       input.data,
     );
     if (!result.ok) {
-      return c.text("Request not found", 404);
+      return result.error === "CHANGED"
+        ? showRequest(c, { error: changedMeanwhile }, 409)
+        : c.text("Request not found", 404);
     }
     return done(c, input.data.reference.toUpperCase(), "status");
   });
+
+  registerAdministration(app, { db, view, render });
 
   app.notFound((c) => c.text("Not found", 404));
   app.onError((error, c) => {

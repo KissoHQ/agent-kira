@@ -546,6 +546,31 @@ describe("pages", () => {
     expect((await app.request("/ready")).status).toBe(200);
   });
 
+  it("asks the database once for a burst of readiness checks", async () => {
+    let queries = 0;
+    const db = getAppDatabase();
+    const counted = new Proxy(db, {
+      get(target, property) {
+        const value: unknown = Reflect.get(target, property, target);
+        if (property === "execute" && typeof value === "function") {
+          return (...args: unknown[]) => {
+            queries += 1;
+            return Reflect.apply(value, target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const watched = createWebApp({ db: counted, timeZone: "Europe/Paris" });
+
+    const answers = await Promise.all(
+      Array.from({ length: 50 }, async () => watched.request("/ready")),
+    );
+
+    expect(answers.every((answer) => answer.status === 200)).toBe(true);
+    expect(queries).toBe(1);
+  });
+
   it("serves the stylesheet, the script, the icon and the health check without a session", async () => {
     expect((await app.request("/app.css")).headers.get("content-type")).toContain("text/css");
     const script = await app.request("/app.js");

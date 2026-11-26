@@ -1,6 +1,6 @@
 # 003 — How the agent tools are protected
 
-- Status: accepted
+- Status: accepted, revised by [decision 012](012-eve-agent.md)
 - Date: 2026-10-28
 
 ## Context
@@ -62,6 +62,16 @@ The web interface connects with the `request_agent_app` role and the agent serve
 - The agent registered on the Mastra server has no tools. Mastra Studio can talk to it, but cannot run the request tools.
 - The Mastra server API must require authentication before it is reachable from another machine.
 - Tests cover the access rule for every operation, the tools offered to an unverified sender, input validation, the step limit, the concurrent filing of a message and the database rights.
+
+## Revision: the tools in the process of the agent (November 2026)
+
+The agent and its tools now run in their own process, built with eve ([decision 012](012-eve-agent.md)). The rule of this decision stays: the tools are built for each message, bound to the sender that the code verified, and the model can neither choose nor change it.
+
+- The server sends each message to the agent on an internal route, protected by a password that only the two processes know (`AGENT_PASSWORD`). The route checks the message and its sender against a schema, then starts the session of the message with them. eve gives them to the tools and to the instructions from the session, out of reach of the model.
+- A session that the route did not start gets no tool.
+- The routes of eve that let a client open or read sessions are removed, and the agent has none of the tools of eve: it can neither run code, read files nor reach the web.
+- The agent is reached through the network of Docker only. No port of it is published.
+- The consequences about the Mastra server and Mastra Studio no longer apply. Tests cover the refusal of a request without the password or with another one, of a body that is not a message of the server, the routes of eve that answer nothing, and the tools offered to an unverified sender.
 
 ## Sources
 

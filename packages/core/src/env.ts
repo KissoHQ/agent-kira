@@ -37,6 +37,24 @@ export const ollamaApiKey = z.preprocess(
   z.string().min(1).optional(),
 );
 
+// Node.js runs a longer timer after 1 ms instead, which would cut every call at once.
+const maxTimerSeconds = Math.floor(2_147_483_647 / 1000);
+
+// A wait in whole seconds. An empty value in .env means the default.
+export const timeoutSeconds = (defaultSeconds: number) =>
+  z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().int().min(1).max(maxTimerSeconds).default(defaultSeconds),
+  );
+
+const minAgentPasswordLength = 32;
+
+// Password that the server gives to call the agent, which runs in its own process. Only the two of
+// them know it.
+export const agentPassword = z
+  .string()
+  .min(minAgentPasswordLength, `Must have at least ${minAgentPasswordLength} characters`);
+
 const classifierEnvSchema = z.object({
   OLLAMA_BASE_URL: ollamaBaseUrl,
   OLLAMA_API_KEY: ollamaApiKey,

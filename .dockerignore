@@ -1,0 +1,15 @@
+# Only the sources and manifests go into the images: no dependencies installed on this machine,
+# no build output, no secret and no local notes.
+**/node_modules
+**/.mastra
+**/dist
+**/coverage
+.git
+.github
+.env
+.env.*
+!.env.example
+.suivi
+.claude
+CLAUDE.md
+*.log

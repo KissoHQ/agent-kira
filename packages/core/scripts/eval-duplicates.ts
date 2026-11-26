@@ -23,6 +23,7 @@ const judge = createOllamaDuplicateJudge({
   baseUrl: env.OLLAMA_BASE_URL,
   model: env.OLLAMA_MODEL,
   timeoutMs: 600_000,
+  apiKey: env.OLLAMA_API_KEY,
 });
 const samples = samplesSchema.parse(
   JSON.parse(readFileSync(new URL("../eval/duplicates.json", import.meta.url), "utf8")),

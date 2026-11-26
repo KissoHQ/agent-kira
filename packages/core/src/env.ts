@@ -27,8 +27,19 @@ const testDatabaseEnvSchema = z.object({ TEST_DATABASE_URL: postgresUrl });
 // evaluation messages: see docs/agent.md.
 const defaultReviewThreshold = 0.8;
 
+// The documented API of Ollama is under /api: a base URL without it answers 404 to every call.
+export const ollamaBaseUrl = z.url().refine((value) => /\/api\/?$/.test(value), {
+  message: "Must end with /api, such as http://127.0.0.1:11434/api",
+});
+// Optional bearer token, for an Ollama reached through an authenticating proxy.
+export const ollamaApiKey = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().min(1).optional(),
+);
+
 const classifierEnvSchema = z.object({
-  OLLAMA_BASE_URL: z.url(),
+  OLLAMA_BASE_URL: ollamaBaseUrl,
+  OLLAMA_API_KEY: ollamaApiKey,
   OLLAMA_MODEL: z.string().min(1),
   CLASSIFICATION_REVIEW_THRESHOLD: z.coerce.number().min(0).max(1).default(defaultReviewThreshold),
 });
@@ -37,7 +48,8 @@ const classifierEnvSchema = z.object({
 const defaultEmbeddingModel = "qwen3-embedding:0.6b";
 
 const knowledgeEnvSchema = z.object({
-  OLLAMA_BASE_URL: z.url(),
+  OLLAMA_BASE_URL: ollamaBaseUrl,
+  OLLAMA_API_KEY: ollamaApiKey,
   OLLAMA_EMBEDDING_MODEL: z.string().min(1).default(defaultEmbeddingModel),
 });
 

@@ -5,7 +5,17 @@ export interface OllamaOptions {
   baseUrl: string;
   model: string;
   timeoutMs: number;
+  // Sent as a bearer token to an Ollama reached through an authenticating proxy, never needed on
+  // this machine.
+  apiKey?: string;
   fetch?: typeof fetch;
+}
+
+// Headers of a request to Ollama, with the key of the proxy in front of it when there is one.
+export function ollamaHeaders(apiKey: string | undefined): Record<string, string> {
+  return apiKey === undefined
+    ? { "content-type": "application/json" }
+    : { "content-type": "application/json", authorization: `Bearer ${apiKey}` };
 }
 
 export type Logprobs = { token: string; logprob: number }[];
@@ -24,7 +34,7 @@ export async function askOllama(
   const send = options.fetch ?? fetch;
   const response = await send(`${options.baseUrl}/chat`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: ollamaHeaders(options.apiKey),
     signal: AbortSignal.timeout(options.timeoutMs),
     body: JSON.stringify({
       model: options.model,

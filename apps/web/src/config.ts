@@ -25,6 +25,15 @@ const webEnvSchema = z.object({
   // Set to true only behind a reverse proxy that adds the address of the person to X-Forwarded-For,
   // so the limit of sign-in attempts counts people and not the proxy.
   WEB_TRUST_PROXY: z.stringbool().default(false),
+  // Origin of the interface as people reach it behind a reverse proxy, such as
+  // https://kira.example.com: forms are only accepted from it.
+  WEB_PUBLIC_ORIGIN: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z
+      .url()
+      .refine((value) => new URL(value).origin === value, { message: "Must be an origin only" })
+      .optional(),
+  ),
   // Time zone of the dates shown to the team, as an IANA name.
   WEB_TIME_ZONE: z
     .string()

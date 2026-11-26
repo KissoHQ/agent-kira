@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ollamaHeaders } from "../classification/ollama.ts";
 import { embeddingDimensions } from "../db/schema.ts";
 
 export interface Embedder {
@@ -13,6 +14,8 @@ export interface OllamaEmbedderOptions {
   baseUrl: string;
   model: string;
   timeoutMs: number;
+  // Bearer token of an authenticating proxy in front of Ollama, as for the classifier.
+  apiKey?: string;
   fetch?: typeof fetch;
 }
 
@@ -35,7 +38,7 @@ export function createOllamaEmbedder(options: OllamaEmbedderOptions): Embedder {
     embed: async (texts, kind) => {
       const response = await send(`${options.baseUrl}/embed`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: ollamaHeaders(options.apiKey),
         signal: AbortSignal.timeout(options.timeoutMs),
         body: JSON.stringify({
           model: options.model,

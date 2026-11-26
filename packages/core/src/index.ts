@@ -2,6 +2,7 @@ export {
   connectDatabase,
   type Database,
   type DatabaseConnection,
+  pingDatabase,
   type Transaction,
 } from "./db/client.ts";
 export * from "./db/schema.ts";
@@ -23,6 +24,8 @@ export {
   loadAppDatabaseEnv,
   loadServerDatabaseEnv,
   loadClassifierEnv,
+  ollamaApiKey,
+  ollamaBaseUrl,
   loadDatabaseEnv,
   loadKnowledgeEnv,
   type AppDatabaseEnv,
@@ -201,3 +204,4 @@ export {
   saveContactRow,
   setContactDisabled,
 } from "./admin/people.ts";
+export { ollamaHeaders } from "./classification/ollama.ts";

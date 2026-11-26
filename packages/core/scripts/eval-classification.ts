@@ -86,6 +86,7 @@ const classify = createOllamaClassifier({
   baseUrl: env.OLLAMA_BASE_URL,
   model: env.OLLAMA_MODEL,
   timeoutMs: 600_000,
+  apiKey: env.OLLAMA_API_KEY,
 });
 const sets = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["dev", "holdout"];
 

@@ -22,6 +22,9 @@ const webEnvSchema = z.object({
     (value) => (value === "" ? undefined : value),
     z.string().refine(isAbsolute, { message: "Must be an absolute path" }).optional(),
   ),
+  // Set to true only behind a reverse proxy that adds the address of the person to X-Forwarded-For,
+  // so the limit of sign-in attempts counts people and not the proxy.
+  WEB_TRUST_PROXY: z.stringbool().default(false),
   // Time zone of the dates shown to the team, as an IANA name.
   WEB_TIME_ZONE: z
     .string()

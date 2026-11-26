@@ -13,6 +13,7 @@ const { db, close } = connectDatabase(env.APP_DATABASE_URL, {
 const app = createWebApp({
   db,
   timeZone: env.WEB_TIME_ZONE,
+  trustProxy: env.WEB_TRUST_PROXY,
   attachmentsDir: env.ATTACHMENTS_DIR,
   onError: (error) => {
     console.error("Request failed:", error.message);

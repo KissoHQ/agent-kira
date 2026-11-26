@@ -31,8 +31,9 @@ export function createChannelHandler(
   agent: AgentClient,
   events: ChannelHandlerEvents,
 ): ChannelHandler {
-  const classifierEnv = loadClassifierEnv();
+  // The limits first: a wrong one is named, even when the settings of Ollama are missing too.
   const limits = loadHandlingLimits();
+  const classifierEnv = loadClassifierEnv();
   const { db } = connectDatabase(loadServerDatabaseEnv().SERVER_DATABASE_URL, {
     onError: events.onDatabaseError,
   });

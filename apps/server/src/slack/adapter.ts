@@ -10,15 +10,15 @@ import {
   type TurnInput,
 } from "@request-agent/core";
 
-import type { HandledMessage } from "../mastra/agents/handle-message";
+import type { HandledMessage } from "../agent/handle-message.ts";
 import {
   createReplyDelivery,
   createSerialQueue,
   defaultRetryDelaysMs,
   handleReliably,
-} from "../reliable-handling";
-import { isPermanentSlackError } from "./errors";
-import { parseSlackEvent, type SlackMessage } from "./events";
+} from "../reliable-handling.ts";
+import { isPermanentSlackError } from "./errors.ts";
+import { parseSlackEvent, type SlackMessage } from "./events.ts";
 
 // The parts of the Slack clients the adapter uses, so tests can replace them.
 export interface SlackEventSource {

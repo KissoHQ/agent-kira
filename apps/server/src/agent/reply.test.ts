@@ -1,8 +1,7 @@
-import type { RequestView } from "@request-agent/core";
+import type { RequestView, ToolOutcome } from "@request-agent/core";
 import { describe, expect, it } from "vitest";
 
-import type { ToolOutcome } from "../tools/request-tools";
-import { composeReply, fallbackReply } from "./reply";
+import { composeReply, fallbackReply } from "./reply.ts";
 
 const request: RequestView = {
   reference: "REQ-0007",

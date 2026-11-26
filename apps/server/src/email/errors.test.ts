@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isPermanentSmtpError } from "./errors";
+import { isPermanentSmtpError } from "./errors.ts";
 
 // An error as nodemailer reports a reply of the mail server.
 const smtpError = (responseCode: number, command: string) =>

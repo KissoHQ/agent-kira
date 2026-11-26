@@ -15,15 +15,15 @@ import { useServerTestDatabase, useTestDatabase } from "@request-agent/core/test
 import type Mail from "nodemailer/lib/mailer";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { rawEmail } from "../../test/emails";
-import type { HandledMessage } from "../mastra/agents/handle-message";
+import { rawEmail } from "../../test/emails.ts";
+import type { HandledMessage } from "../agent/handle-message.ts";
 import {
   acknowledgementOf,
   type OutgoingEmail,
   startEmailAdapter,
   verifiedReplyRate,
-} from "./adapter";
-import type { TrustSettings } from "./policy";
+} from "./adapter.ts";
+import type { TrustSettings } from "./policy.ts";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useServerTestDatabase();

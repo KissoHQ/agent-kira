@@ -2,12 +2,11 @@
   "name": "@request-agent/server",
   "version": "0.1.0",
   "private": true,
-  "description": "Mastra server: agent, tools and channel adapters",
+  "description": "Server of KIRA: channel adapters, classification, answer check and delivery",
   "type": "module",
   "scripts": {
-    "dev": "mastra dev --env ../../.env",
-    "build": "mastra build",
-    "start": "mastra start --env ../../.env",
+    "dev": "node --env-file-if-exists=../../.env --watch src/main.ts",
+    "start": "node --env-file-if-exists=../../.env src/main.ts",
     "demo:email": "node --env-file-if-exists=../../.env scripts/demo-email.ts",
     "demo:widget": "node --env-file-if-exists=../../.env scripts/demo-widget.ts",
     "eval:agent": "vitest run --config vitest.eval.config.ts",
@@ -16,7 +15,6 @@
   },
   "dependencies": {
     "@hono/node-server": "catalog:",
-    "@mastra/core": "catalog:",
     "@request-agent/core": "workspace:*",
     "@slack/socket-mode": "catalog:",
     "@slack/web-api": "catalog:",
@@ -24,13 +22,12 @@
     "hono": "catalog:",
     "imapflow": "catalog:",
     "nodemailer": "catalog:",
-    "ollama-ai-provider-v2": "catalog:",
     "postal-mime": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@request-agent/agent": "workspace:*",
     "@types/node": "catalog:",
-    "mastra": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

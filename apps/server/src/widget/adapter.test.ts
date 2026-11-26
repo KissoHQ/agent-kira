@@ -19,11 +19,11 @@ import {
 } from "@request-agent/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { HandledMessage } from "../mastra/agents/handle-message";
-import { conversationLifetimeMs, createWidgetApp, quotaRecountIntervalMs } from "./adapter";
-import { maxWaitingMessages, maxWaitingPerAddress, messageRate } from "./admission";
-import { signIdentity } from "./identity";
-import { listenForWidget } from "./start";
+import type { HandledMessage } from "../agent/handle-message.ts";
+import { conversationLifetimeMs, createWidgetApp, quotaRecountIntervalMs } from "./adapter.ts";
+import { maxWaitingMessages, maxWaitingPerAddress, messageRate } from "./admission.ts";
+import { signIdentity } from "./identity.ts";
+import { listenForWidget } from "./start.ts";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useServerTestDatabase();

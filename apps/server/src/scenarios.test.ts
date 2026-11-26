@@ -1,6 +1,6 @@
 // The two scenarios of the demonstration, from the channel to the stored request: the real
-// adapters, message handler, tools and database, with only Slack, the mail servers and the model
-// replaced by fakes.
+// adapters, message handler, agent, tools and database, with only Slack, the mail servers and the
+// model replaced by fakes.
 import {
   type Classification,
   conversations,
@@ -16,17 +16,18 @@ import {
   useServerTestDatabase,
   useTestDatabase,
 } from "@request-agent/core/testing";
+import type { ScriptedStep } from "@request-agent/agent/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { rawEmail } from "../test/emails";
-import { type ScriptedStep, scriptedModel } from "../test/scripted-model";
-import { type OutgoingEmail, startEmailAdapter } from "./email/adapter";
-import { type HandledMessage, handleMessage } from "./mastra/agents/handle-message";
-import { createRequestAgent } from "./mastra/agents/request-agent";
-import { type SlackEventSource, startSlackAdapter } from "./slack/adapter";
+import { useAgent } from "../test/agent.ts";
+import { rawEmail } from "../test/emails.ts";
+import { type HandledMessage, handleMessage } from "./agent/handle-message.ts";
+import { type OutgoingEmail, startEmailAdapter } from "./email/adapter.ts";
+import { type SlackEventSource, startSlackAdapter } from "./slack/adapter.ts";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useServerTestDatabase();
+const agent = useAgent();
 
 beforeEach(async () => {
   await seedDatabase(getDatabase());
@@ -37,10 +38,10 @@ const brunoEmail = "Bruno Leroy <bruno.leroy@globex.example>";
 
 type Handler = (input: TurnInput) => Promise<HandledMessage>;
 
-// The message handler of the server, with a model that plays a script and a classifier that
-// gives one fixed classification per message, in order.
+// The message handler of the server, with the agent of the tests, whose model plays a script, and a
+// classifier that gives one fixed classification per message, in order.
 function handlerFor(steps: ScriptedStep[], classifications: Partial<Classification>[]): Handler {
-  const agent = createRequestAgent(scriptedModel(steps));
+  agent.scripted.play(steps);
   let next = 0;
   const classify = () => {
     const classification = classifications[Math.min(next, classifications.length - 1)] ?? {};
@@ -53,11 +54,10 @@ function handlerFor(steps: ScriptedStep[], classifications: Partial<Classificati
     );
   };
   return (input: TurnInput) =>
-    handleMessage(agent, getAppDatabase(), input, {
+    handleMessage(agent.client, getAppDatabase(), input, {
       classify,
       judgeDuplicate: () => Promise.resolve({ reference: null, confidence: 1 }),
       reviewThreshold: testReviewThreshold,
-      searchKnowledge: () => Promise.resolve([]),
       agentTimeoutMs: 60_000,
     });
 }

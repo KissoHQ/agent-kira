@@ -1,9 +1,8 @@
-import type { OutputProcessor } from "@mastra/core/processors";
 import { parseReference, requestPriority, requestStatus, requestType } from "@request-agent/core";
 
 // The model writes the answer to the sender, and code checks it before it is sent: a small local
 // model can name a request it never looked up, promise what nobody will do, or leak the words of
-// the system. A rejected answer is written again once, with the reason, and a second failure falls
+// the system. A rejected answer is written again once, with the reasons, and a second failure falls
 // back to the answer written by code from the tool outcomes.
 
 export interface AnswerContext {
@@ -18,9 +17,6 @@ export interface AnswerContext {
 
 // Longest answer sent, so a model that loops on its text cannot flood a thread.
 export const maxAnswerLength = 3000;
-
-// How many times the model may write the answer again after a rejection.
-export const maxAnswerRetries = 1;
 
 // Codes of the database, which the sender must read in plain words. BUG reads the same in both.
 const enumCodes = [
@@ -158,26 +154,4 @@ export function toPlainText(text: string): string {
       .replaceAll(/^#{1,6}\s+/gm, "")
       .trim()
   );
-}
-
-// Checks each final answer of the model, before it ends the run. A rejected answer is sent back to
-// the model with its problems, as many times as maxAnswerRetries allows, and told to onRejected.
-export function createAnswerCheck(
-  context: () => AnswerContext,
-  onRejected: () => void = () => undefined,
-): OutputProcessor {
-  return {
-    id: "answer-check",
-    processOutputStep: ({ text, toolCalls, abort, messageList }) => {
-      if ((toolCalls?.length ?? 0) > 0) {
-        return messageList;
-      }
-      const problems = answerProblems(text ?? "", context());
-      if (problems.length > 0) {
-        onRejected();
-        abort(`Your answer cannot be sent. ${problems.join(" ")}`, { retry: true });
-      }
-      return messageList;
-    },
-  };
 }

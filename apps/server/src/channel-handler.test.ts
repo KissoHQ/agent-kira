@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { scriptedModel } from "../test/scripted-model";
-import { createChannelHandler } from "./channel-handler";
-import { createRequestAgent } from "./mastra/agents/request-agent";
+import type { AgentClient } from "./agent/client.ts";
+import { createChannelHandler } from "./channel-handler.ts";
 
 const ignore = () => undefined;
+
+// Never called: the handler refuses its settings first.
+const unusedAgent: AgentClient = {
+  handle: () => Promise.reject(new Error("unused")),
+  rewrite: () => Promise.reject(new Error("unused")),
+  end: () => Promise.resolve(),
+  ready: () => Promise.resolve(true),
+};
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -13,8 +20,13 @@ afterEach(() => {
 describe("createChannelHandler", () => {
   it("refuses a time limit that is not a whole number of seconds, naming it", () => {
     vi.stubEnv("AGENT_TIMEOUT_SECONDS", "0");
-    const agent = createRequestAgent(scriptedModel([{ text: "ok" }]));
 
-    expect(() => createChannelHandler(agent, ignore, ignore)).toThrow(/AGENT_TIMEOUT_SECONDS/);
+    expect(() =>
+      createChannelHandler(unusedAgent, {
+        onDatabaseError: ignore,
+        onLimitCut: ignore,
+        onSessionNotEnded: ignore,
+      }),
+    ).toThrow(/AGENT_TIMEOUT_SECONDS/);
   });
 });

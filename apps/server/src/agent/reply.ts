@@ -1,6 +1,4 @@
-import type { RequestView } from "@request-agent/core";
-
-import type { ToolOutcome } from "../tools/request-tools";
+import type { RequestView, ToolOutcome } from "@request-agent/core";
 
 // The answer written by code from what the tools really did, sent when no answer of the model
 // passes the answer check (decision 009).

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { retryUntilDone } from "./retry";
+import { retryUntilDone } from "./retry.ts";
 
 describe("retryUntilDone", () => {
   it("tries again after each failure until the task succeeds", async () => {

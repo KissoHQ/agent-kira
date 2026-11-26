@@ -1,16 +1,15 @@
-import type { IMastraLogger } from "@mastra/core/logger";
-
-import type { ChannelHandler } from "../channel-handler";
-import { loadSlackTokens } from "../config";
-import { retryUntilDone } from "../retry";
-import { startSlackAdapter } from "./adapter";
-import { connectSlack } from "./connect";
+import type { ChannelHandler } from "../channel-handler.ts";
+import { errorMessage, type Logger } from "../logger.ts";
+import { loadSlackTokens } from "../config.ts";
+import { retryUntilDone } from "../retry.ts";
+import { startSlackAdapter } from "./adapter.ts";
+import { connectSlack } from "./connect.ts";
 
 // Connects the agent to Slack when the Slack tokens are configured. Returns false otherwise, so
 // the server keeps running without Slack.
 export async function startSlackIfConfigured(
   handler: () => ChannelHandler,
-  logger: IMastraLogger,
+  logger: Logger,
 ): Promise<boolean> {
   const tokens = loadSlackTokens();
   if (tokens === undefined) {
@@ -21,9 +20,7 @@ export async function startSlackIfConfigured(
   // Slack may be unreachable when the server starts, such as after a restart of the machine: the
   // channel keeps trying instead of staying off until the next restart.
   const onFailure = (step: string) => (error: unknown, attempt: number) => {
-    logger.error(`Slack could not ${step}, attempt ${attempt}`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(`Slack could not ${step}, attempt ${attempt}`, { error: errorMessage(error) });
   };
   const slack = await retryUntilDone(() => connectSlack(tokens), {
     onFailure: onFailure("check the bot token"),
@@ -43,7 +40,7 @@ export async function startSlackIfConfigured(
         logger.info(message);
       },
       error: (message, error) => {
-        logger.error(message, { error: error instanceof Error ? error.message : String(error) });
+        logger.error(message, { error: errorMessage(error) });
       },
     },
   });

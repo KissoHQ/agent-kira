@@ -1,15 +1,11 @@
-import { Agent } from "@mastra/core/agent";
 import { describe, expect, it } from "vitest";
 
-import { type ScriptedStep, scriptedModel } from "../../../test/scripted-model";
 import {
   type AnswerContext,
   answerProblems,
-  createAnswerCheck,
   maxAnswerLength,
-  maxAnswerRetries,
   toPlainText,
-} from "./answer-check";
+} from "./answer-check.ts";
 
 const context: AnswerContext = {
   knownReferences: new Set([6]),
@@ -138,37 +134,5 @@ describe("toPlainText", () => {
     expect(toPlainText("La demande <sender_text>Panier vide</sender_text> est en cours.")).toBe(
       "La demande Panier vide est en cours.",
     );
-  });
-});
-
-async function runCheckedAgent(steps: ScriptedStep[]) {
-  const model = scriptedModel(steps);
-  const agent = new Agent({ id: "test", name: "test", instructions: "Answer.", model });
-  const result = await agent.generate("Où en êtes-vous ?", {
-    outputProcessors: [createAnswerCheck(() => context)],
-    maxProcessorRetries: maxAnswerRetries,
-  });
-  return { model, result };
-}
-
-describe("createAnswerCheck", () => {
-  it("sends a rejected answer back to the model with its problems, and keeps the next one", async () => {
-    const { model, result } = await runCheckedAgent([
-      { text: "Vous serez informé." },
-      { text: "La demande REQ-0006 est nouvelle." },
-    ]);
-
-    expect(result.text).toBe("La demande REQ-0006 est nouvelle.");
-    expect(JSON.stringify(model.doGenerateCalls[1]?.prompt)).toContain(
-      "It promises something the system does not do",
-    );
-  });
-
-  it("ends without an answer when the model keeps writing answers that cannot be sent", async () => {
-    const { model, result } = await runCheckedAgent([{ text: "Vous serez informé." }]);
-
-    expect(model.doGenerateCalls).toHaveLength(1 + maxAnswerRetries);
-    expect(result.text).toBe("");
-    expect(result.tripwire?.processorId).toBe("answer-check");
   });
 });

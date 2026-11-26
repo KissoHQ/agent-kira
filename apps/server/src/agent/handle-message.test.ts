@@ -3,7 +3,8 @@ import {
   type DuplicateJudge,
   events,
   type KnowledgeHit,
-  modelContextTokens,
+  maxAgentSteps,
+  maxAnswerRetries,
   requests,
 } from "@request-agent/core";
 import {
@@ -16,16 +17,15 @@ import {
   useServerTestDatabase,
   useTestDatabase,
 } from "@request-agent/core/testing";
-import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
+import type { ScriptedStep } from "@request-agent/agent/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { offeredTools, type ScriptedStep, scriptedModel } from "../../../test/scripted-model";
-import { maxAnswerRetries } from "./answer-check";
-import { type AgentRun, handleMessage, maxAgentSteps } from "./handle-message";
-import { createRequestAgent } from "./request-agent";
+import { useAgent } from "../../test/agent.ts";
+import { type AgentRun, handleMessage } from "./handle-message.ts";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useServerTestDatabase();
+const agent = useAgent();
 
 beforeEach(async () => {
   await seedDatabase(getDatabase());
@@ -43,6 +43,9 @@ function fixedClassifier(classification: Partial<Classification> = {}) {
 // No existing request repeats the message, unless a test says otherwise.
 const noDuplicate = () => Promise.resolve({ reference: null, confidence: 1 });
 
+// How a run ended, with the number of its calls of the model.
+type RunSummary = Omit<AgentRun, "modelCalls"> & { modelCalls: number };
+
 async function run(
   steps: ScriptedStep[],
   sender: string,
@@ -53,53 +56,47 @@ async function run(
     text?: string;
     thread?: string;
     articles?: KnowledgeHit[];
-    model?: MastraLanguageModelV2Mock;
     agentTimeoutMs?: number;
   } = {},
 ) {
-  const model = options.model ?? scriptedModel(steps);
-  const searches: { actor: string; question: string }[] = [];
-  const runs: AgentRun[] = [];
+  agent.scripted.play(steps, options.articles);
+  const runs: RunSummary[] = [];
   const messageId = await storeMessage(getDatabase(), {
     sender,
     bodyText: options.text ?? "Le portail ne répond plus.",
     thread: options.thread,
   });
   const result = await handleMessage(
-    createRequestAgent(model),
+    agent.client,
     getAppDatabase(),
     { messageId, trust: options.trust ?? "VERIFIED", channelAddress: null },
     {
       classify: fixedClassifier(options.classification),
       judgeDuplicate: options.judgeDuplicate ?? noDuplicate,
       reviewThreshold: testReviewThreshold,
-      searchKnowledge: (actor, question) => {
-        searches.push({ actor: actor.kind, question });
-        return Promise.resolve(options.articles ?? []);
-      },
       agentTimeoutMs: options.agentTimeoutMs ?? 60_000,
-      onAgentRun: (agentRun) => runs.push(agentRun),
+      onAgentRun: (agentRun) => runs.push({ ...agentRun, modelCalls: agentRun.modelCalls.length }),
     },
   );
-  return { model, result, messageId, searches, runs };
+  return {
+    calls: agent.scripted.calls(),
+    searches: agent.scripted.searches(),
+    result,
+    messageId,
+    runs,
+  };
 }
 
 describe("handleMessage", () => {
   it("stops the agent when the model takes longer than the limit, and files the message for a person", async () => {
-    // A model that never answers, until it is told to stop.
-    const silent = new MastraLanguageModelV2Mock({
-      doGenerate: ({ abortSignal }) =>
-        new Promise((_, reject) => {
-          abortSignal?.addEventListener("abort", () => {
-            reject(abortSignal.reason);
-          });
-        }),
-    });
-
     const started = performance.now();
-    const { result, runs, messageId } = await run([], bruno, { model: silent, agentTimeoutMs: 50 });
+    const { result, runs, messageId } = await run(
+      [{ text: "Bien reçu.", delayMs: 30_000 }],
+      bruno,
+      { agentTimeoutMs: 1000 },
+    );
 
-    expect(performance.now() - started).toBeLessThan(5000);
+    expect(performance.now() - started).toBeLessThan(15_000);
     expect(runs).toEqual([{ messageId, modelCalls: 0, rejectedAnswers: 0, cutBy: "time-limit" }]);
     expect(result).toEqual({
       reply:
@@ -111,13 +108,13 @@ describe("handleMessage", () => {
   it("files the message of a verified contact as a request, and sends the answer of the model", async () => {
     const answer =
       "Votre demande est enregistrée sous la référence REQ-0001 : Portail inaccessible.";
-    const { model, result } = await run(
+    const { calls, result } = await run(
       [{ toolCalls: [{ tool: "create_request", input: {} }] }, { text: answer }],
       bruno,
     );
 
     expect(result).toEqual({ reply: answer, filedBySystem: false });
-    expect(model.doGenerateCalls).toHaveLength(2);
+    expect(calls).toHaveLength(2);
     const [request] = await getDatabase().select().from(requests);
     expect(request).toMatchObject({
       title: "Portail inaccessible",
@@ -151,23 +148,21 @@ describe("handleMessage", () => {
   });
 
   it("gives the model the information computed by the system and the wrapped message", async () => {
-    const { model } = await run([{ text: "Bonjour" }], bruno);
+    const { calls } = await run([{ text: "Bonjour" }], bruno);
 
-    const prompt = model.doGenerateCalls[0]?.prompt ?? [];
-    const system = prompt
-      .filter((message) => message.role === "system")
-      .map((message) => message.content)
-      .join("\n");
+    const system = calls[0]?.system ?? "";
     expect(system).toContain("Information computed by the system");
     expect(system).toContain('"key": "PORTAL"');
     expect(system).toContain('"confidence": 0.9');
-    expect(JSON.stringify(prompt)).toContain("<message>\\nLe portail ne répond plus.\\n</message>");
+    expect(calls[0]?.messages.map((message) => message.text)).toContain(
+      "<message>\nLe portail ne répond plus.\n</message>",
+    );
   });
 
   it("gives the model the results of the tools in plain words, without the codes", async () => {
     await run([{ toolCalls: [{ tool: "create_request", input: {} }] }], bruno);
 
-    const { model } = await run(
+    const { calls } = await run(
       [
         { toolCalls: [{ tool: "get_request_status", input: { reference: "REQ-0001" } }] },
         { text: "Elle est nouvelle." },
@@ -176,23 +171,15 @@ describe("handleMessage", () => {
       { classification: { type: "STATUS_REQUEST" } },
     );
 
-    const toolResults = JSON.stringify(model.doGenerateCalls[1]?.prompt.at(-1));
+    const toolResults = JSON.stringify(calls[1]?.toolResults);
     expect(toolResults).toContain("new: no one of the team has started on it yet");
     expect(toolResults).not.toContain('"NEW"');
   });
 
-  it("turns off the thinking mode of the model and asks for the context window of the classifier", async () => {
-    const { model } = await run([{ text: "Bonjour" }], bruno);
-
-    expect(model.doGenerateCalls[0]?.providerOptions).toMatchObject({
-      ollama: { think: false, options: { num_ctx: modelContextTokens } },
-    });
-  });
-
   it("gives a verified contact all the request tools", async () => {
-    const { model } = await run([{ text: "Bonjour" }], bruno);
+    const { calls } = await run([{ text: "Bonjour" }], bruno);
 
-    expect(offeredTools(model)).toEqual([
+    expect(calls[0]?.tools).toEqual([
       "add_message_to_request",
       "create_request",
       "find_request",
@@ -210,9 +197,9 @@ describe("handleMessage", () => {
   });
 
   it("gives an unverified sender only the tools to file the message", async () => {
-    const { model } = await run([{ text: "Bonjour" }], alice, { trust: "UNVERIFIED" });
+    const { calls } = await run([{ text: "Bonjour" }], alice, { trust: "UNVERIFIED" });
 
-    expect(offeredTools(model)).toEqual(["create_request", "identify_contact", "identify_project"]);
+    expect(calls[0]?.tools).toEqual(["create_request", "identify_contact", "identify_project"]);
   });
 
   it("keeps an unverified sender from changing a request, even through a tool it was not given", async () => {
@@ -254,12 +241,12 @@ describe("handleMessage", () => {
   });
 
   it("stops after a bounded number of steps when the model keeps calling tools", async () => {
-    const { model, runs, messageId } = await run(
+    const { calls, runs, messageId } = await run(
       [{ toolCalls: [{ tool: "get_request_status", input: { reference: "REQ-0001" } }] }],
       bruno,
     );
 
-    expect(model.doGenerateCalls).toHaveLength(maxAgentSteps);
+    expect(calls).toHaveLength(maxAgentSteps);
     expect(runs).toEqual([
       { messageId, modelCalls: maxAgentSteps, rejectedAnswers: 0, cutBy: "step-limit" },
     ]);
@@ -272,7 +259,7 @@ describe("handleMessage", () => {
     // A status request with neither a linked request nor a reference: find the request, file the
     // message under it, read its status, pass the question that no tool answers, then answer. The
     // first answer makes a promise, so it is rejected and written again.
-    const { model, result, runs, messageId } = await run(
+    const { calls, result, runs, messageId } = await run(
       [
         { toolCalls: [{ tool: "search_requests", input: { query: "portail" } }] },
         { toolCalls: [{ tool: "add_message_to_request", input: { reference: "REQ-0001" } }] },
@@ -296,7 +283,7 @@ describe("handleMessage", () => {
     );
 
     expect(result).toEqual({ reply: answer, filedBySystem: false });
-    expect(model.doGenerateCalls).toHaveLength(6);
+    expect(calls).toHaveLength(6);
     expect(runs).toEqual([{ messageId, modelCalls: 6, rejectedAnswers: 1, cutBy: undefined }]);
   });
 
@@ -349,13 +336,13 @@ describe("handleMessage", () => {
   });
 
   it("does not run the agent, file or answer anything for thanks", async () => {
-    const { model, result } = await run([{ text: "De rien !" }], bruno, {
+    const { calls, result } = await run([{ text: "De rien !" }], bruno, {
       classification: { type: "OTHER", confidence: 0.95 },
     });
 
     // No answer, which also avoids loops of automatic replies by email.
     expect(result).toEqual({ reply: null, filedBySystem: false });
-    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(calls).toHaveLength(0);
     expect(await getDatabase().select().from(requests)).toHaveLength(0);
   });
 
@@ -397,7 +384,7 @@ describe("handleMessage", () => {
   it("falls back to the answer written by code when no answer of the model can be sent", async () => {
     await run([{ toolCalls: [{ tool: "create_request", input: {} }] }], bruno);
 
-    const { model, result } = await run(
+    const { calls, result } = await run(
       [
         { toolCalls: [{ tool: "get_request_status", input: { reference: "REQ-0001" } }] },
         { toolCalls: [{ tool: "add_message_to_request", input: { reference: "REQ-0001" } }] },
@@ -407,7 +394,7 @@ describe("handleMessage", () => {
       { classification: { type: "STATUS_REQUEST" } },
     );
 
-    expect(model.doGenerateCalls).toHaveLength(3 + maxAnswerRetries);
+    expect(calls).toHaveLength(3 + maxAnswerRetries);
     expect(result.reply).toBe(
       "Votre message a été ajouté à la demande REQ-0001. La demande REQ-0001 est enregistrée, en attente de traitement.",
     );
@@ -560,28 +547,72 @@ describe("handleMessage", () => {
   it("writes nothing when the classification fails", async () => {
     const messageId = await storeMessage(getDatabase(), { sender: bruno, bodyText: "Panne" });
 
+    agent.scripted.play([{ toolCalls: [{ tool: "create_request", input: {} }] }]);
+
     await expect(
       handleMessage(
-        createRequestAgent(scriptedModel([{ toolCalls: [{ tool: "create_request", input: {} }] }])),
+        agent.client,
         getAppDatabase(),
         { messageId, trust: "VERIFIED", channelAddress: null },
         {
           classify: () => Promise.reject(new Error("Ollama is down")),
           judgeDuplicate: noDuplicate,
           reviewThreshold: 0.8,
-          searchKnowledge: () => Promise.resolve([]),
           agentTimeoutMs: 60_000,
         },
       ),
     ).rejects.toThrow("Ollama is down");
     expect(await getDatabase().select().from(requests)).toHaveLength(0);
+    expect(agent.scripted.calls()).toHaveLength(0);
   });
-});
 
-describe("the agent registered on the server", () => {
-  it("has no tools, so the server API cannot run the request tools", async () => {
-    const agent = createRequestAgent(scriptedModel([{ text: "Bonjour" }]));
+  it("fails, for a retry, when the agent cannot be reached, without writing anything", async () => {
+    const messageId = await storeMessage(getDatabase(), { sender: bruno, bodyText: "Panne" });
+    const ended: string[] = [];
 
-    expect(await agent.listTools()).toEqual({});
+    await expect(
+      handleMessage(
+        { ...agent.client, handle: () => Promise.reject(new Error("The agent is down")) },
+        getAppDatabase(),
+        { messageId, trust: "VERIFIED", channelAddress: null },
+        {
+          classify: fixedClassifier(),
+          judgeDuplicate: noDuplicate,
+          reviewThreshold: 0.8,
+          agentTimeoutMs: 60_000,
+          onSessionNotEnded: (id) => ended.push(id),
+        },
+      ),
+    ).rejects.toThrow("The agent is down");
+    expect(await getDatabase().select().from(requests)).toHaveLength(0);
+    expect(ended).toEqual([]);
+  });
+
+  it("answers the message when its session cannot be ended, and tells it", async () => {
+    const messageId = await storeMessage(getDatabase(), { sender: bruno, bodyText: "Panne" });
+    agent.scripted.play([
+      { toolCalls: [{ tool: "create_request", input: {} }] },
+      { text: "Votre demande REQ-0001 est enregistrée." },
+    ]);
+    const notEnded: string[] = [];
+
+    const result = await handleMessage(
+      { ...agent.client, end: () => Promise.reject(new Error("The agent is down")) },
+      getAppDatabase(),
+      { messageId, trust: "VERIFIED", channelAddress: null },
+      {
+        classify: fixedClassifier(),
+        judgeDuplicate: noDuplicate,
+        reviewThreshold: 0.8,
+        agentTimeoutMs: 60_000,
+        onSessionNotEnded: (id) => notEnded.push(id),
+      },
+    );
+
+    expect(result).toEqual({
+      reply: "Votre demande REQ-0001 est enregistrée.",
+      filedBySystem: false,
+    });
+    expect(notEnded).toEqual([messageId]);
   });
 });

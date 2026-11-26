@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  loadAgentEnv,
   loadEmailEnv,
   loadEnv,
   loadHandlingLimits,
   loadSlackTokens,
   loadWidgetEnv,
-} from "./config";
+} from "./config.ts";
 
 const validEnv = {
   OLLAMA_BASE_URL: "http://127.0.0.1:11434/api",
@@ -16,10 +17,17 @@ const validEnv = {
 describe("loadEnv", () => {
   it("returns the parsed configuration when every variable is valid", () => {
     expect(
-      loadEnv({ ...validEnv, MASTRA_HOST: "0.0.0.0", OLLAMA_API_KEY: "key", LOG_LEVEL: "warn" }),
+      loadEnv({
+        ...validEnv,
+        SERVER_HOST: "0.0.0.0",
+        SERVER_PORT: "4200",
+        OLLAMA_API_KEY: "key",
+        LOG_LEVEL: "warn",
+      }),
     ).toEqual({
       ...validEnv,
-      MASTRA_HOST: "0.0.0.0",
+      SERVER_HOST: "0.0.0.0",
+      SERVER_PORT: 4200,
       OLLAMA_API_KEY: "key",
       LOG_LEVEL: "warn",
     });
@@ -38,9 +46,12 @@ describe("loadEnv", () => {
     );
   });
 
-  it("listens on this machine only by default, including with an empty value", () => {
-    expect(loadEnv(validEnv).MASTRA_HOST).toBe("127.0.0.1");
-    expect(loadEnv({ ...validEnv, MASTRA_HOST: "" }).MASTRA_HOST).toBe("127.0.0.1");
+  it("listens on port 4111 of this machine only by default, including with empty values", () => {
+    expect(loadEnv(validEnv)).toMatchObject({ SERVER_HOST: "127.0.0.1", SERVER_PORT: 4111 });
+    expect(loadEnv({ ...validEnv, SERVER_HOST: "", SERVER_PORT: "" })).toMatchObject({
+      SERVER_HOST: "127.0.0.1",
+      SERVER_PORT: 4111,
+    });
   });
 
   it("rejects a base URL that is not a URL", () => {
@@ -52,19 +63,39 @@ describe("loadEnv", () => {
   });
 });
 
+describe("loadAgentEnv", () => {
+  const password = "a-password-of-at-least-32-characters";
+
+  it("reaches the agent on this machine by default, with its password", () => {
+    expect(loadAgentEnv({ AGENT_PASSWORD: password, AGENT_URL: "" })).toEqual({
+      AGENT_URL: "http://127.0.0.1:4120",
+      AGENT_PASSWORD: password,
+    });
+    expect(
+      loadAgentEnv({ AGENT_PASSWORD: password, AGENT_URL: "http://agent:4120" }).AGENT_URL,
+    ).toBe("http://agent:4120");
+  });
+
+  it("rejects a missing or short password, and a URL that is not HTTP", () => {
+    expect(() => loadAgentEnv({})).toThrow(/AGENT_PASSWORD/);
+    expect(() => loadAgentEnv({ AGENT_PASSWORD: "short" })).toThrow(/at least 32 characters/);
+    expect(() => loadAgentEnv({ AGENT_PASSWORD: password, AGENT_URL: "ftp://agent" })).toThrow(
+      /AGENT_URL/,
+    );
+  });
+});
+
 describe("loadHandlingLimits", () => {
   it("keeps the limits measured on a CPU when none is set, including with empty values", () => {
     const defaults = {
       classificationTimeoutMs: 300_000,
       agentTimeoutMs: 900_000,
-      embeddingTimeoutMs: 60_000,
     };
     expect(loadHandlingLimits({})).toEqual(defaults);
     expect(
       loadHandlingLimits({
         CLASSIFICATION_TIMEOUT_SECONDS: "",
         AGENT_TIMEOUT_SECONDS: "",
-        EMBEDDING_TIMEOUT_SECONDS: "",
       }),
     ).toEqual(defaults);
   });
@@ -74,13 +105,8 @@ describe("loadHandlingLimits", () => {
       loadHandlingLimits({
         CLASSIFICATION_TIMEOUT_SECONDS: "30",
         AGENT_TIMEOUT_SECONDS: "240",
-        EMBEDDING_TIMEOUT_SECONDS: "5",
       }),
-    ).toEqual({
-      classificationTimeoutMs: 30_000,
-      agentTimeoutMs: 240_000,
-      embeddingTimeoutMs: 5000,
-    });
+    ).toEqual({ classificationTimeoutMs: 30_000, agentTimeoutMs: 240_000 });
   });
 
   it.each(["0", "-5", "1.5", "ten", "2147484"])(

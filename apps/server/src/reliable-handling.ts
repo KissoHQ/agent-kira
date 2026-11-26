@@ -11,8 +11,8 @@ import {
   unclassifiedTurn,
 } from "@request-agent/core";
 
-import type { HandledMessage } from "./mastra/agents/handle-message";
-import { filedForReviewReply } from "./mastra/agents/reply";
+import type { HandledMessage } from "./agent/handle-message.ts";
+import { filedForReviewReply } from "./agent/reply.ts";
 
 // Waits before handling a failed message again: the model may be restarting or busy.
 export const defaultRetryDelaysMs = [60_000, 300_000];

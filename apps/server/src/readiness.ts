@@ -1,4 +1,4 @@
-import { type ApiRoute, registerApiRoute } from "@mastra/core/server";
+import { Hono } from "hono";
 
 // Whether the server can do its work, for an orchestrator that sends it messages only when it can.
 // /health only says that the process answers; /ready also checks what the work needs.
@@ -10,12 +10,15 @@ export interface ReadinessChecks {
   database: () => Promise<boolean>;
   // Whether Ollama answers and has the model of the agent.
   model: () => Promise<boolean>;
+  // Whether the agent, in its own process, answers and reaches the database.
+  agent: () => Promise<boolean>;
 }
 
 export interface ReadinessReport {
   ready: boolean;
   database: "ok" | "down";
   model: "ok" | "down";
+  agent: "ok" | "down";
   channels: Record<string, ChannelState>;
 }
 
@@ -26,15 +29,20 @@ export function createReadiness(checks: ReadinessChecks) {
       channels.set(name, state);
     },
     async report(): Promise<ReadinessReport> {
-      const [database, model] = await Promise.all([checks.database(), checks.model()]);
+      const [database, model, agent] = await Promise.all([
+        checks.database(),
+        checks.model(),
+        checks.agent(),
+      ]);
       const states = Object.fromEntries(channels);
       const channelsReady = [...channels.values()].every(
         (state) => state === "on" || state === "off",
       );
       return {
-        ready: database && model && channelsReady,
+        ready: database && model && agent && channelsReady,
         database: database ? "ok" : "down",
         model: model ? "ok" : "down",
+        agent: agent ? "ok" : "down",
         channels: states,
       };
     },
@@ -80,14 +88,14 @@ export async function ollamaHasModel(options: {
   }
 }
 
-// The /ready route: 200 when everything is ready, 503 otherwise, with what is not.
-export function readinessRoute(readiness: Readiness): ApiRoute {
-  return registerApiRoute("/ready", {
-    method: "GET",
-    requiresAuth: false,
-    handler: async (c) => {
-      const report = await readiness.report();
-      return c.json(report, report.ready ? 200 : 503);
-    },
+// /health, 200 while the process answers, and /ready: 200 when everything is ready, 503 otherwise,
+// with what is not.
+export function createHealthApp(readiness: Readiness): Hono {
+  const app = new Hono();
+  app.get("/health", (c) => c.json({ status: "ok" }));
+  app.get("/ready", async (c) => {
+    const report = await readiness.report();
+    return c.json(report, report.ready ? 200 : 503);
   });
+  return app;
 }

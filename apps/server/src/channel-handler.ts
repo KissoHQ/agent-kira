@@ -1,37 +1,40 @@
-import type { Agent } from "@mastra/core/agent";
 import {
   connectDatabase,
   createOllamaClassifier,
   createOllamaDuplicateJudge,
-  createOllamaEmbedder,
   type Database,
   loadClassifierEnv,
-  loadKnowledgeEnv,
   loadServerDatabaseEnv,
-  searchKnowledge,
   type TurnInput,
 } from "@request-agent/core";
 
-import { loadHandlingLimits } from "./config";
-import { type AgentRun, type HandledMessage, handleMessage } from "./mastra/agents/handle-message";
+import type { AgentClient } from "./agent/client.ts";
+import { type AgentRun, type HandledMessage, handleMessage } from "./agent/handle-message.ts";
+import { loadHandlingLimits } from "./config.ts";
 
 export interface ChannelHandler {
   db: Database;
   handle: (input: TurnInput) => Promise<HandledMessage>;
 }
 
+export interface ChannelHandlerEvents {
+  onDatabaseError: (error: Error) => void;
+  // A run of the agent that a limit cut is reported, so the team sees whether the limits fit the
+  // machine that runs Ollama.
+  onLimitCut: (run: AgentRun) => void;
+  onSessionNotEnded: (messageId: string, error: unknown) => void;
+}
+
 // What every channel adapter needs: the database, with the restricted role of the server, and the
-// agent bound to the classifier and the knowledge base. A run of the agent that a limit cut is
-// reported, so the team sees whether the limits fit the machine that runs Ollama.
+// agent, reached through its client, after the classifier.
 export function createChannelHandler(
-  agent: Agent,
-  onDatabaseError: (error: Error) => void,
-  onLimitCut: (run: AgentRun) => void,
+  agent: AgentClient,
+  events: ChannelHandlerEvents,
 ): ChannelHandler {
   const classifierEnv = loadClassifierEnv();
   const limits = loadHandlingLimits();
   const { db } = connectDatabase(loadServerDatabaseEnv().SERVER_DATABASE_URL, {
-    onError: onDatabaseError,
+    onError: events.onDatabaseError,
   });
   const ollama = {
     baseUrl: classifierEnv.OLLAMA_BASE_URL,
@@ -41,12 +44,6 @@ export function createChannelHandler(
   };
   const classify = createOllamaClassifier(ollama);
   const judgeDuplicate = createOllamaDuplicateJudge(ollama);
-  const embedder = createOllamaEmbedder({
-    baseUrl: classifierEnv.OLLAMA_BASE_URL,
-    model: loadKnowledgeEnv().OLLAMA_EMBEDDING_MODEL,
-    timeoutMs: limits.embeddingTimeoutMs,
-    apiKey: classifierEnv.OLLAMA_API_KEY,
-  });
   return {
     db,
     handle: (input) =>
@@ -54,13 +51,13 @@ export function createChannelHandler(
         classify,
         judgeDuplicate,
         reviewThreshold: classifierEnv.CLASSIFICATION_REVIEW_THRESHOLD,
-        searchKnowledge: (actor, question) => searchKnowledge(db, embedder, actor, question),
         agentTimeoutMs: limits.agentTimeoutMs,
         onAgentRun: (run) => {
           if (run.cutBy !== undefined) {
-            onLimitCut(run);
+            events.onLimitCut(run);
           }
         },
+        onSessionNotEnded: events.onSessionNotEnded,
       }),
   };
 }

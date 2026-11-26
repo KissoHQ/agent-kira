@@ -1,11 +1,11 @@
 import type { Server } from "node:net";
 
 import { serve } from "@hono/node-server";
-import type { IMastraLogger } from "@mastra/core/logger";
 
-import type { ChannelHandler } from "../channel-handler";
-import { loadWidgetEnv } from "../config";
-import { createWidgetApp } from "./adapter";
+import type { ChannelHandler } from "../channel-handler.ts";
+import { errorMessage, type Logger } from "../logger.ts";
+import { loadWidgetEnv } from "../config.ts";
+import { createWidgetApp } from "./adapter.ts";
 
 type Fetch = Parameters<typeof serve>[0]["fetch"];
 
@@ -33,12 +33,11 @@ export function listenForWidget(fetch: Fetch, hostname: string, port: number): P
 // Starts the widget when the origins of the applications that embed it are configured. Returns
 // false otherwise, so the server keeps running without it.
 //
-// The widget listens on its own port, not as a route of the Mastra server: Mastra hands its routes
-// a copy of the request without the connection, so every person would share one address and one
-// limit, and it reads JSON bodies whole before any route can limit their size.
+// The widget listens on its own port, apart from /health and /ready: it sees the address of each
+// person and reads no request body before its own limits.
 export async function startWidgetIfConfigured(
   handler: () => ChannelHandler,
-  logger: IMastraLogger,
+  logger: Logger,
 ): Promise<boolean> {
   const env = loadWidgetEnv();
   if (env === undefined) {
@@ -62,7 +61,7 @@ export async function startWidgetIfConfigured(
         logger.info(message);
       },
       error: (message, error) => {
-        logger.error(message, { error: error instanceof Error ? error.message : String(error) });
+        logger.error(message, { error: errorMessage(error) });
       },
     },
   });

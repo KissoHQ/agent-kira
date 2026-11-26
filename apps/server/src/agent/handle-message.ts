@@ -1,6 +1,8 @@
-import type { Agent } from "@mastra/core/agent";
 import {
   addMessageToRequest,
+  type AgentLimit,
+  type AgentTurnRequest,
+  type AgentTurnResult,
   assessDuplicate,
   type ClassifiedTurn,
   type Classifier,
@@ -9,33 +11,24 @@ import {
   describeContact,
   describeProject,
   type DuplicateJudge,
+  explainForModel,
   fileUnhandledMessage,
   findRequest,
   forwardToTeam,
   isMessageFiled,
   isNotARequest,
-  type KnowledgeHit,
+  maxAnswerRetries,
   parseReference,
   prepareTurn,
   type RequestView,
+  type ToolOutcome,
   type TurnInput,
   wrapUntrusted,
 } from "@request-agent/core";
 
-import { explainForModel } from "../tools/explain";
-import { createRequestTools, type ToolOutcome } from "../tools/request-tools";
-import {
-  type AnswerContext,
-  createAnswerCheck,
-  maxAnswerRetries,
-  toPlainText,
-} from "./answer-check";
-import { composeReply, filedForReviewReply } from "./reply";
-
-// Model calls allowed for one message, each possibly running tools: acting on the message, looking
-// up what the answer needs, then writing it. It bounds the work a message can trigger: an injected
-// instruction cannot make the agent loop over the tools.
-export const maxAgentSteps = 8;
+import { type AnswerContext, answerProblems, toPlainText } from "./answer-check.ts";
+import type { AgentClient } from "./client.ts";
+import { composeReply, filedForReviewReply } from "./reply.ts";
 
 // The length of a question passed to the team when the system forwards the message itself.
 const forwardedQuestionLength = 500;
@@ -44,25 +37,26 @@ export interface HandlingSettings {
   classify: Classifier;
   judgeDuplicate: DuplicateJudge;
   reviewThreshold: number;
-  // Help articles closest to a question, among the projects of the sender.
-  searchKnowledge: (actor: ClassifiedTurn["actor"], question: string) => Promise<KnowledgeHit[]>;
-  // Longest run of the agent on one message, all its calls included. A model that stops answering
-  // would otherwise hold the queue of its channel forever. The run then ends like at the step
-  // limit: what the tools did stays, and code writes the answer and files the message for a person.
+  // Longest run of the agent on one message, all its calls and its rewrite included. A model that
+  // stops answering would otherwise hold the queue of its channel forever. The run then ends like
+  // at the step limit: what the tools did stays, and code writes the answer and files the message
+  // for a person.
   agentTimeoutMs: number;
   // Told how each run of the agent ended, to report the runs a limit cut.
   onAgentRun?: (run: AgentRun) => void;
+  // Told when the session of a handled message could not be ended: the agent keeps it until its
+  // own timeout, and the message is answered all the same.
+  onSessionNotEnded?: (messageId: string, error: unknown) => void;
 }
 
 export interface AgentRun {
   messageId: string;
-  // Calls to the model that returned, the answers written again after a rejection included.
-  modelCalls: number;
-  // Answers of the model the answer check rejected. Each one costs a call the step limit does
-  // not count.
+  // Each call of the model, the answer written again after a rejection included.
+  modelCalls: AgentTurnResult["modelCalls"];
+  // Answers of the model the answer check rejected.
   rejectedAnswers: number;
   // The limit that stopped the model before it wrote its whole answer, if any.
-  cutBy: "step-limit" | "time-limit" | "context-window" | undefined;
+  cutBy: AgentLimit | undefined;
 }
 
 export interface HandledMessage {
@@ -193,36 +187,46 @@ function finalReply(
     : `${answer}\n\n${filedForReviewReply(filedBySystem.reference)}`;
 }
 
-// A run ends with tool calls only at the step limit or after a question to the sender, which is
-// the answer itself. Mastra ends a run stopped by its abort signal as "aborted", without an error.
-// A call ends with "length" when the context window is full: the model stopped in the middle of
-// what it wrote.
-function limitThatCut(
-  result: Awaited<ReturnType<Agent["generate"]>>,
-  outcomes: ToolOutcome[],
-): AgentRun["cutBy"] {
-  if (result.finishReason === "aborted") {
-    return "time-limit";
-  }
-  if (result.steps.some((step) => step.finishReason === "length")) {
-    return "context-window";
-  }
-  const last = result.steps.at(-1);
-  if (last !== undefined && last.toolCalls.length > 0 && !askedForDetails(outcomes)) {
-    return "step-limit";
-  }
-  return undefined;
+interface AgentAnswer {
+  // The answer of the model that passed the check, or empty when none did.
+  answer: string;
+  result: AgentTurnResult;
+  rejectedAnswers: number;
 }
 
-// The answer is the text of the last step, which ended the run without calling a tool and which
-// the answer check read. Text the model wrote next to its tool calls is not an answer: it can
-// think aloud there, and it would repeat itself.
-function finalAnswer(result: Awaited<ReturnType<Agent["generate"]>>): string {
-  const last = result.steps.at(-1);
-  if (result.finishReason === "tripwire" || last === undefined || last.toolCalls.length > 0) {
-    return "";
+// Runs the agent on the message, then checks its answer. A rejected answer is sent back to the
+// model with its problems, in the session of the message, as many times as maxAnswerRetries
+// allows. An answer that a limit cut is never sent: it may stop in the middle of a sentence.
+async function agentAnswer(
+  agent: AgentClient,
+  request: AgentTurnRequest,
+  deadline: number,
+): Promise<AgentAnswer> {
+  let result = await agent.handle(request);
+  let rejectedAnswers = 0;
+  for (;;) {
+    if (result.answer === "" || result.cutBy !== null) {
+      return { answer: "", result, rejectedAnswers };
+    }
+    const context = answerContext(request.information, request.turn.messageText, result.outcomes);
+    const problems = answerProblems(result.answer, context);
+    if (problems.length === 0) {
+      return { answer: toPlainText(result.answer), result, rejectedAnswers };
+    }
+    rejectedAnswers += 1;
+    const remainingMs = deadline - Date.now();
+    if (rejectedAnswers > maxAnswerRetries || remainingMs <= 0) {
+      const cutBy = remainingMs <= 0 ? "time-limit" : null;
+      return { answer: "", result: { ...result, cutBy }, rejectedAnswers };
+    }
+    // Each rewrite needs the answer before it: the calls cannot run together.
+    // oxlint-disable-next-line no-await-in-loop
+    result = await agent.rewrite({
+      ...request,
+      text: `Your answer cannot be sent. ${problems.join(" ")}`,
+      timeoutMs: remainingMs,
+    });
   }
-  return toPlainText(last.text);
 }
 
 // Runs the agent on one stored message, with tools bound to what its verified sender may do. The
@@ -230,7 +234,7 @@ function finalAnswer(result: Awaited<ReturnType<Agent["generate"]>>): string {
 // writes the answer, which code checks before it is sent; when no answer passes the check, the
 // answer is written by code from what the tools really did.
 export async function handleMessage(
-  agent: Agent,
+  agent: AgentClient,
   db: Database,
   input: TurnInput,
   settings: HandlingSettings,
@@ -242,37 +246,30 @@ export async function handleMessage(
   if (isNotARequest(turn) && !asksAQuestion(turn.messageText)) {
     return { reply: null, filedBySystem: false };
   }
-  const outcomes: ToolOutcome[] = [];
-  const system = await describeTurn(db, turn);
-  let rejectedAnswers = 0;
-  const result = await agent.generate(wrapUntrusted(turn.messageText), {
-    system,
-    toolsets: {
-      requests: createRequestTools(db, turn, outcomes, (question) =>
-        settings.searchKnowledge(turn.actor, question),
-      ),
-    },
-    maxSteps: maxAgentSteps,
-    stopWhen: () => askedForDetails(outcomes),
-    outputProcessors: [
-      createAnswerCheck(
-        () => answerContext(system, turn.messageText, outcomes),
-        () => {
-          rejectedAnswers += 1;
-        },
-      ),
-    ],
-    maxProcessorRetries: maxAnswerRetries,
-    abortSignal: AbortSignal.timeout(settings.agentTimeoutMs),
-  });
+  const request: AgentTurnRequest = {
+    turn,
+    information: await describeTurn(db, turn),
+    text: wrapUntrusted(turn.messageText),
+    timeoutMs: settings.agentTimeoutMs,
+  };
+  let run: AgentAnswer;
+  try {
+    run = await agentAnswer(agent, request, Date.now() + settings.agentTimeoutMs);
+  } finally {
+    // The agent then deletes what it stored about the message, the database keeps it.
+    await agent.end(turn.messageId).catch((error: unknown) => {
+      settings.onSessionNotEnded?.(turn.messageId, error);
+    });
+  }
+  const { answer, result, rejectedAnswers } = run;
+  const outcomes = [...result.outcomes];
   settings.onAgentRun?.({
     messageId: turn.messageId,
-    modelCalls: result.steps.length,
+    modelCalls: result.modelCalls,
     rejectedAnswers,
-    cutBy: limitThatCut(result, outcomes),
+    cutBy: result.cutBy ?? undefined,
   });
 
-  const answer = finalAnswer(result);
   if (!(await isMessageFiled(db, turn.messageId))) {
     const kept = await keepFollowUp(db, turn);
     if (kept !== undefined) {

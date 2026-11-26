@@ -2,7 +2,7 @@
   "name": "request-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Multi-channel AI agent for request management (Slack, Email) built with Mastra",
+  "description": "Multi-channel AI agent for request management (Slack, Email, web widget) built with eve",
   "type": "module",
   "packageManager": "pnpm@12.15.0",
   "engines": {
@@ -10,8 +10,9 @@
   },
   "scripts": {
     "dev": "pnpm --filter @request-agent/server dev",
-    "build": "pnpm --filter @request-agent/server build",
+    "build": "pnpm --filter @request-agent/agent build",
     "start": "pnpm --filter @request-agent/server start",
+    "agent": "pnpm --filter @request-agent/agent start",
     "web": "pnpm --filter @request-agent/web start",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",

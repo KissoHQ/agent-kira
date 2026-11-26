@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { createReadiness, ollamaHasModel } from "./readiness";
+import { createHealthApp, createReadiness, ollamaHasModel } from "./readiness.ts";
 
 const up = () => Promise.resolve(true);
 const down = () => Promise.resolve(false);
 
 describe("createReadiness", () => {
   it("is ready when the database, the model and every started channel are", async () => {
-    const readiness = createReadiness({ database: up, model: up });
+    const readiness = createReadiness({ database: up, model: up, agent: up });
     readiness.setChannel("Slack", "on");
     readiness.setChannel("Email", "off");
 
@@ -15,25 +15,30 @@ describe("createReadiness", () => {
       ready: true,
       database: "ok",
       model: "ok",
+      agent: "ok",
       channels: { Slack: "on", Email: "off" },
     });
   });
 
-  it("is not ready while a channel starts or failed, or when the database or model is down", async () => {
-    const starting = createReadiness({ database: up, model: up });
+  it("is not ready while a channel starts or failed, or when the database, model or agent is down", async () => {
+    const starting = createReadiness({ database: up, model: up, agent: up });
     starting.setChannel("Email", "starting");
-    const failed = createReadiness({ database: up, model: up });
+    const failed = createReadiness({ database: up, model: up, agent: up });
     failed.setChannel("Slack", "error");
 
     expect((await starting.report()).ready).toBe(false);
     expect((await failed.report()).ready).toBe(false);
-    expect(await createReadiness({ database: down, model: up }).report()).toMatchObject({
+    expect(await createReadiness({ database: down, model: up, agent: up }).report()).toMatchObject({
       ready: false,
       database: "down",
     });
-    expect(await createReadiness({ database: up, model: down }).report()).toMatchObject({
+    expect(await createReadiness({ database: up, model: down, agent: up }).report()).toMatchObject({
       ready: false,
       model: "down",
+    });
+    expect(await createReadiness({ database: up, model: up, agent: down }).report()).toMatchObject({
+      ready: false,
+      agent: "down",
     });
   });
 });
@@ -71,5 +76,25 @@ describe("ollamaHasModel", () => {
         fetch: () => Promise.resolve(new Response("", { status: 404 })),
       }),
     ).toBe(false);
+  });
+});
+
+describe("createHealthApp", () => {
+  it("answers /health while the process runs, and /ready with what is missing", async () => {
+    const app = createHealthApp(createReadiness({ database: up, model: up, agent: down }));
+
+    const health = await app.request("/health");
+    const ready = await app.request("/ready");
+
+    expect(health.status).toBe(200);
+    expect(ready.status).toBe(503);
+    expect(await ready.json()).toMatchObject({ ready: false, agent: "down" });
+  });
+
+  it("answers no other route", async () => {
+    const app = createHealthApp(createReadiness({ database: up, model: up, agent: up }));
+
+    expect((await app.request("/api/agents")).status).toBe(404);
+    expect((await app.request("/ready", { method: "POST" })).status).toBe(404);
   });
 });

@@ -39,7 +39,7 @@ const handlingLimitsEnvSchema = z.object({
   // The whole run of the agent on one message, all its model calls, tools and rewrite included. A
   // run cut by it loses the answer of the model: code answers and files the message for a person.
   // So it must let the longest run allowed by the step limit end.
-  AGENT_TIMEOUT_SECONDS: timeoutSeconds(900),
+  AGENT_TIMEOUT_SECONDS: timeoutSeconds(2000),
 });
 
 export interface HandlingLimits {

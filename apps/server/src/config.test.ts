@@ -89,7 +89,7 @@ describe("loadHandlingLimits", () => {
   it("keeps the limits measured on a CPU when none is set, including with empty values", () => {
     const defaults = {
       classificationTimeoutMs: 300_000,
-      agentTimeoutMs: 900_000,
+      agentTimeoutMs: 2_000_000,
     };
     expect(loadHandlingLimits({})).toEqual(defaults);
     expect(

@@ -1,15 +1,22 @@
 import {
   type Database,
   isKnownConversation,
+  listPendingReplies,
   listUnhandledMessages,
   markHandled,
+  markReplySent,
   storeInboundMessage,
   storeOutboundMessage,
   type TurnInput,
 } from "@request-agent/core";
 
 import type { HandledMessage } from "../mastra/agents/handle-message";
-import { createSerialQueue, defaultRetryDelaysMs, handleReliably } from "../reliable-handling";
+import {
+  createReplyDelivery,
+  createSerialQueue,
+  defaultRetryDelaysMs,
+  handleReliably,
+} from "../reliable-handling";
 import { parseSlackEvent, type SlackMessage } from "./events";
 
 // The parts of the Slack clients the adapter uses, so tests can replace them.
@@ -45,6 +52,8 @@ export interface SlackAdapterOptions {
   logger: SlackAdapterLogger;
   // Waits before handling a failed message again, after the first and second failures.
   retryDelaysMs?: number[];
+  // Waits before posting an answer again when Slack refused it.
+  sendRetryDelaysMs?: number[];
 }
 
 // Sent when a message could not even be filed for a person, for example when the database is down.
@@ -67,15 +76,16 @@ export async function startSlackAdapter(
   options: SlackAdapterOptions,
 ): Promise<{ idle: () => Promise<void> }> {
   const { db, web, logger } = options;
-  const queue = createSerialQueue();
+  const queue = createSerialQueue((error) => {
+    logger.error("A Slack task failed", error);
+  });
+  const deliver = createReplyDelivery(db, queue, logger, options.sendRetryDelaysMs);
   const context = { botUserId: options.botUserId, teamId: options.teamId };
 
-  async function reply(message: SlackMessage, text: string): Promise<void> {
-    const posted = await web.postInThread({
-      channel: message.channel,
-      threadTs: message.threadTs,
-      text,
-    });
+  const post = (message: SlackMessage, text: string) =>
+    web.postInThread({ channel: message.channel, threadTs: message.threadTs, text });
+
+  async function record(message: SlackMessage, text: string, posted: { ts: string }) {
     await storeOutboundMessage(db, {
       channel: "SLACK",
       conversationExternalId: conversationId(message),
@@ -86,6 +96,15 @@ export async function startSlackAdapter(
       sentAt: sentAt(posted.ts),
       // Ties the answer to the message it answers, and so to the request of that message.
       inReplyTo: messageId(message.channel, message.ts),
+    });
+  }
+
+  // Posts the answer kept with a handled message, again later if Slack refuses it.
+  function answer(message: SlackMessage, storedMessageId: string, text: string) {
+    return deliver({
+      messageId: storedMessageId,
+      send: () => post(message, text),
+      record: (posted) => record(message, text, posted),
     });
   }
 
@@ -110,13 +129,16 @@ export async function startSlackAdapter(
         return;
       }
       if (outcome.reply !== null) {
-        await reply(message, outcome.reply);
+        await answer(message, storedMessageId, outcome.reply);
       }
     } catch (error) {
+      // Nothing could be kept for this message: the notice is posted once.
       logger.error(`Slack message ${message.channel}:${message.ts} could not be handled`, error);
-      await reply(message, unavailableReply).catch((replyError: unknown) => {
-        logger.error("The unavailability reply could not be sent", replyError);
-      });
+      await post(message, unavailableReply)
+        .then((posted) => record(message, unavailableReply, posted))
+        .catch((replyError: unknown) => {
+          logger.error("The unavailability reply could not be sent", replyError);
+        });
     }
   }
 
@@ -166,9 +188,21 @@ export async function startSlackAdapter(
       }
     });
   }
-  // Messages stored before a restart but never handled are handled now, in their order.
+  // Messages stored before a restart but never handled are handled now, in their order, after the
+  // answers that were kept but not posted yet.
   async function recoverUnhandled(): Promise<void> {
-    const unhandled = await listUnhandledMessages(db, "SLACK");
+    const [pending, unhandled] = await Promise.all([
+      listPendingReplies(db, "SLACK"),
+      listUnhandledMessages(db, "SLACK"),
+    ]);
+    for (const stored of pending) {
+      const message = parseSlackEvent(stored.raw, context);
+      queue.push(() =>
+        message === undefined
+          ? markReplySent(db, stored.messageId)
+          : answer(message, stored.messageId, stored.reply),
+      );
+    }
     const unreadable = [];
     // Queued in their order, oldest first.
     for (const stored of unhandled) {

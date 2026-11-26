@@ -2,6 +2,7 @@ import {
   type Database,
   fileUnhandledMessage,
   markHandled,
+  markReplySent,
   maxHandlingAttempts,
   prepareTurn,
   recordFailedAttempt,
@@ -29,7 +30,7 @@ export async function handleReliably(
 ): Promise<HandlingOutcome> {
   try {
     const handled = await handle(input);
-    await markHandled(db, input.messageId);
+    await markHandled(db, input.messageId, handled.reply);
     return { kind: "handled", reply: handled.reply };
   } catch (error) {
     const attempts = await recordFailedAttempt(db, input.messageId);
@@ -39,20 +40,19 @@ export async function handleReliably(
     }
     const turn = await unclassifiedTurn(db, await prepareTurn(db, input));
     const filed = await fileUnhandledMessage(db, turn);
-    await markHandled(db, input.messageId);
-    return {
-      kind: "handled",
-      reply: filed === undefined ? null : filedForReviewReply(filed.reference),
-    };
+    const reply = filed === undefined ? null : filedForReviewReply(filed.reference);
+    await markHandled(db, input.messageId, reply);
+    return { kind: "handled", reply };
   }
 }
 
-// Runs tasks one at a time, including the retries scheduled later, and tells when all are done.
-export function createSerialQueue() {
+// Runs tasks one at a time, including the retries scheduled later, and tells when all are done. A
+// task that fails is reported, and the next ones still run.
+export function createSerialQueue(onError: (error: unknown) => void) {
   let chain = Promise.resolve();
   const pending = new Set<Promise<void>>();
   const push = (task: () => Promise<void>) => {
-    chain = chain.then(task);
+    chain = chain.then(task).catch(onError);
   };
   return {
     push,
@@ -76,4 +76,54 @@ export function createSerialQueue() {
       } while (pending.size > 0);
     },
   };
+}
+
+export type SerialQueue = ReturnType<typeof createSerialQueue>;
+
+// Waits before sending an answer again: the mail server or Slack may be down for a while. After
+// the last delay, the answer is tried again at that pace until it goes out.
+export const defaultSendRetryDelaysMs = [60_000, 300_000, 900_000];
+
+export interface Delivery<Sent> {
+  // The inbound message the answer is for, which keeps the answer until it is sent.
+  messageId: string;
+  // Sends the answer through the channel. Undefined when the channel decides not to send it.
+  send: () => Promise<Sent | undefined>;
+  // Keeps the answer that went out in the conversation. A failure here is only logged: the answer
+  // is out, and sending it again would send it twice.
+  record: (sent: Sent) => Promise<void>;
+}
+
+export interface DeliveryLogger {
+  error(message: string, error: unknown): void;
+}
+
+// Sends the answer of a handled message until it goes out. The answer was kept with the message
+// when it was handled, so a channel that is down, or a restart, does not lose it.
+export function createReplyDelivery(
+  db: Database,
+  queue: SerialQueue,
+  logger: DeliveryLogger,
+  retryDelaysMs: number[] = defaultSendRetryDelaysMs,
+) {
+  async function deliver<Sent>(delivery: Delivery<Sent>, attempt = 0): Promise<void> {
+    let sent: Sent | undefined;
+    try {
+      sent = await delivery.send();
+    } catch (error) {
+      const delayMs = retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)] ?? 0;
+      logger.error(`The answer to message ${delivery.messageId} will be sent again`, error);
+      queue.later(delayMs, () => deliver(delivery, attempt + 1));
+      return;
+    }
+    if (sent !== undefined) {
+      await delivery.record(sent).catch((error: unknown) => {
+        logger.error(`The answer to message ${delivery.messageId} was sent but not stored`, error);
+      });
+    }
+    await markReplySent(db, delivery.messageId).catch((error: unknown) => {
+      logger.error(`The answer to message ${delivery.messageId} could not be marked sent`, error);
+    });
+  }
+  return deliver;
 }

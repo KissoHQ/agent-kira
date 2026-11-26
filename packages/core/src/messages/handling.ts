@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "../db/client.ts";
 import { conversations, messages } from "../db/schema.ts";
@@ -19,11 +19,48 @@ export interface UnhandledMessage {
 }
 
 // The system is done with an inbound message, whatever the outcome, so it is not handled again.
-export async function markHandled(db: Database, messageId: string): Promise<void> {
+// Its answer, if any, is kept with it until the channel has sent it.
+export async function markHandled(
+  db: Database,
+  messageId: string,
+  reply: string | null = null,
+): Promise<void> {
   await db
     .update(messages)
-    .set({ handledAt: new Date() })
+    .set({ handledAt: new Date(), pendingReply: reply })
     .where(and(eq(messages.id, messageId), isNull(messages.handledAt)));
+}
+
+// The channel sent the answer to the message, or decided not to send it: it is no longer pending.
+export async function markReplySent(db: Database, messageId: string): Promise<void> {
+  await db.update(messages).set({ pendingReply: null }).where(eq(messages.id, messageId));
+}
+
+export interface PendingReply {
+  messageId: string;
+  externalId: string;
+  conversationExternalId: string;
+  // Original payload of the message, from which the adapter knows where to answer.
+  raw: unknown;
+  reply: string;
+}
+
+// Answers of handled messages that the channel has not sent yet, oldest first: after a restart,
+// the adapter of each channel sends them.
+export async function listPendingReplies(db: Database, channel: Channel): Promise<PendingReply[]> {
+  const rows = await db
+    .select({
+      messageId: messages.id,
+      externalId: messages.externalId,
+      conversationExternalId: conversations.externalId,
+      raw: messages.raw,
+      reply: messages.pendingReply,
+    })
+    .from(messages)
+    .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+    .where(and(eq(messages.channel, channel), isNotNull(messages.pendingReply)))
+    .orderBy(asc(messages.receivedAt));
+  return rows.flatMap((row) => (row.reply === null ? [] : [{ ...row, reply: row.reply }]));
 }
 
 // Records a failed attempt and returns how many attempts have failed so far.

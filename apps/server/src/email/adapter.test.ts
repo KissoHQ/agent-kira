@@ -2,7 +2,10 @@ import {
   attachments,
   connectDatabase,
   conversations,
+  listPendingReplies,
+  markHandled,
   messages,
+  storeInboundMessage,
   type TurnInput,
 } from "@request-agent/core";
 import { useAppTestDatabase, useTestDatabase } from "@request-agent/core/testing";
@@ -43,12 +46,15 @@ async function fakeMail(
   handle: (input: TurnInput) => Promise<HandledMessage>,
   failingStore = false,
   trust = everySenderVerified,
+  // How many times the mail server refuses an answer before taking it.
+  refusals = 0,
 ) {
   let deliver: ((mail: { uid: number; source: Uint8Array }) => Promise<void>) | undefined;
   const seen: number[] = [];
   const sent: OutgoingEmail[] = [];
   const handled: TurnInput[] = [];
   let uid = 0;
+  let refused = 0;
   const adapter = await startEmailAdapter({
     mailbox: {
       watch: (listener) => {
@@ -62,6 +68,10 @@ async function fakeMail(
     },
     sender: {
       send: (email) => {
+        if (refused < refusals) {
+          refused += 1;
+          return Promise.reject(new Error("The mail server is down"));
+        }
         sent.push(email);
         return Promise.resolve({ messageId: `<reply-${sent.length}@requests.example>` });
       },
@@ -76,6 +86,7 @@ async function fakeMail(
     logger: { info: () => {}, error: () => {} },
     // Retries come at once, so the tests do not wait.
     retryDelaysMs: [1, 1],
+    sendRetryDelaysMs: [1, 1],
   });
 
   async function deliverOnly(options: Mail.Options) {
@@ -119,7 +130,7 @@ describe("startEmailAdapter", () => {
         references: ["<first@acme.example>"],
       },
     ]);
-    const stored = await getDatabase().select().from(messages);
+    const stored = await getDatabase().select().from(messages).orderBy(messages.receivedAt);
     expect(stored.map((m) => m.direction)).toEqual(["INBOUND", "OUTBOUND"]);
     expect(await getDatabase().select().from(attachments)).toHaveLength(1);
   });
@@ -252,6 +263,23 @@ describe("startEmailAdapter", () => {
     expect(mail.sent).toHaveLength(verifiedReplyRate.max);
   });
 
+  it("sends the answer again when the mail server refuses it, and sends it once", async () => {
+    const mail = await fakeMail(
+      answered("Votre demande est REQ-0001."),
+      false,
+      everySenderVerified,
+      2,
+    );
+
+    await mail.receive({ messageId: "<refused@acme.example>" });
+
+    expect(mail.handled).toHaveLength(1);
+    expect(mail.sent.map((email) => email.text)).toEqual(["Votre demande est REQ-0001."]);
+    expect(await listPendingReplies(getAppDatabase(), "EMAIL")).toEqual([]);
+    const stored = await getDatabase().select().from(messages).orderBy(messages.receivedAt);
+    expect(stored.map((m) => m.direction)).toEqual(["INBOUND", "OUTBOUND"]);
+  });
+
   it("retries a failing email, then files it for a person and gives its reference", async () => {
     const mail = await fakeMail(() => Promise.reject(new Error("Ollama is down")));
 
@@ -272,6 +300,29 @@ describe("startEmailAdapter", () => {
 
     expect(restarted.handled).toHaveLength(1);
     expect(restarted.sent[0]).toMatchObject({ inReplyTo: "<pending@acme.example>" });
+  });
+
+  it("sends at startup an answer that was kept but not sent before a restart", async () => {
+    const source = await rawEmail({ messageId: "<kept@acme.example>" });
+    const stored = await storeInboundMessage(getAppDatabase(), {
+      channel: "EMAIL",
+      conversationExternalId: "<kept@acme.example>",
+      externalId: "<kept@acme.example>",
+      sender: "alice.martin@acme.example",
+      bodyText: "Le bouton de validation ne fonctionne plus.",
+      raw: { source: Buffer.from(source).toString("base64") },
+      sentAt: new Date(),
+    });
+    await markHandled(getAppDatabase(), stored.messageId, "Votre demande est REQ-0001.");
+
+    const restarted = await fakeMail(answered("not used"));
+    await restarted.idle();
+
+    expect(restarted.handled).toEqual([]);
+    expect(restarted.sent).toMatchObject([
+      { inReplyTo: "<kept@acme.example>", text: "Votre demande est REQ-0001." },
+    ]);
+    expect(await listPendingReplies(getAppDatabase(), "EMAIL")).toEqual([]);
   });
 
   it("leaves an email it could not store unread, so it is read again later", async () => {

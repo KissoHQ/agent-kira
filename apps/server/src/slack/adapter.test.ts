@@ -87,7 +87,7 @@ describe("startSlackAdapter", () => {
         text: "Votre demande est enregistrée sous la référence REQ-0001.",
       },
     ]);
-    const stored = await getDatabase().select().from(messages);
+    const stored = await getDatabase().select().from(messages).orderBy(messages.receivedAt);
     expect(stored.map((m) => [m.direction, m.bodyText])).toEqual([
       ["INBOUND", "le panier se vide"],
       ["OUTBOUND", "Votre demande est enregistrée sous la référence REQ-0001."],

@@ -2,8 +2,10 @@ import {
   conversationOfMessage,
   conversationSenderDomains,
   createRateLimiter,
+  listPendingReplies,
   listUnhandledMessages,
   markHandled,
+  markReplySent,
   type Database,
   storeInboundMessage,
   storeOutboundMessage,
@@ -14,7 +16,12 @@ import {
 import { z } from "zod";
 
 import type { HandledMessage } from "../mastra/agents/handle-message";
-import { createSerialQueue, defaultRetryDelaysMs, handleReliably } from "../reliable-handling";
+import {
+  createReplyDelivery,
+  createSerialQueue,
+  defaultRetryDelaysMs,
+  handleReliably,
+} from "../reliable-handling";
 import { type ParsedEmail, parseEmail } from "./parse";
 import { checkSender, isAutomatic, type SenderCheck, type TrustSettings } from "./policy";
 
@@ -54,6 +61,8 @@ export interface EmailAdapterOptions {
   logger: EmailAdapterLogger;
   // Waits before handling a failed email again, after the first and second failures.
   retryDelaysMs?: number[];
+  // Waits before sending an answer again when the mail server refused it.
+  sendRetryDelaysMs?: number[];
 }
 
 // Sent when an email could not even be filed for a person, for example when the database is down.
@@ -119,54 +128,77 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
   idle: () => Promise<void>;
 }> {
   const { db, logger } = options;
-  const queue = createSerialQueue();
+  const queue = createSerialQueue((error) => {
+    logger.error("An email task failed", error);
+  });
+  const deliver = createReplyDelivery(db, queue, logger, options.sendRetryDelaysMs);
   const verifiedReplies = createRateLimiter(verifiedReplyRate);
   const unverifiedReplies = createRateLimiter(unverifiedReplyRate);
 
-  async function reply(email: ParsedEmail, thread: string, text: string): Promise<void> {
+  interface SentEmail {
+    messageId: string;
+    subject: string;
+    text: string;
+  }
+
+  async function send(email: ParsedEmail, text: string): Promise<SentEmail> {
+    const subject = replySubject(email.subject, text);
     const sent = await options.sender.send({
       to: email.from,
-      subject: replySubject(email.subject, text),
+      subject,
       text,
       inReplyTo: email.messageId,
       references: [...email.references, email.messageId],
     });
+    return { messageId: sent.messageId, subject, text };
+  }
+
+  async function record(email: ParsedEmail, thread: string, sent: SentEmail): Promise<void> {
     await storeOutboundMessage(db, {
       channel: "EMAIL",
       conversationExternalId: thread,
       externalId: sent.messageId,
       sender: options.address,
-      subject: replySubject(email.subject, text),
-      bodyText: text,
+      subject: sent.subject,
+      bodyText: sent.text,
       raw: { to: email.from },
       sentAt: new Date(),
       inReplyTo: email.messageId,
     });
   }
 
-  // Sends an answer within the rules for the sender: nothing to an address whose domain failed
-  // DMARC, the fixed notice to a sender who is not verified, and a bounded number of emails to one
-  // address. A fixed text of the system, such as the unavailability notice, is sent as it is.
-  async function answer(
+  // The text to send within the rules for the sender, decided once: nothing to an address whose
+  // domain failed DMARC, the fixed notice to a sender who is not verified, and a bounded number of
+  // emails to one address. A fixed text of the system, such as the unavailability notice, is sent
+  // as it is. Undefined when nothing is sent.
+  function answerText(
     email: ParsedEmail,
-    thread: string,
     sender: SenderCheck,
     text: { kind: "agent" | "system"; value: string },
-  ): Promise<void> {
+  ): string | undefined {
     if (sender.forged) {
       logger.info(`No answer to ${email.messageId}: DMARC failed for the domain of its sender`);
-      return;
+      return undefined;
     }
     const verified = sender.trust === "VERIFIED";
     if (!(verified ? verifiedReplies : unverifiedReplies).take(email.from).allowed) {
       logger.info(`No answer to ${email.messageId}: its sender reached the limit of answers`);
-      return;
+      return undefined;
     }
-    await reply(
-      email,
-      thread,
-      verified || text.kind === "system" ? text.value : acknowledgementOf(text.value),
-    );
+    return verified || text.kind === "system" ? text.value : acknowledgementOf(text.value);
+  }
+
+  // Sends the answer kept with a handled email, again later if the mail server refuses it.
+  function answer(email: ParsedEmail, thread: string, messageId: string, reply: string) {
+    const text = answerText(email, checkSender(email, options.trust), {
+      kind: "agent",
+      value: reply,
+    });
+    return deliver({
+      messageId,
+      send: async () => (text === undefined ? undefined : send(email, text)),
+      record: (sent) => record(email, thread, sent),
+    });
   }
 
   async function process(email: ParsedEmail, thread: string, messageId: string): Promise<void> {
@@ -190,15 +222,19 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
         return;
       }
       if (outcome.reply !== null) {
-        await answer(email, thread, sender, { kind: "agent", value: outcome.reply });
+        await answer(email, thread, messageId, outcome.reply);
       }
     } catch (error) {
+      // Nothing could be kept for this email: the notice is sent once, as it is.
       logger.error(`Email ${email.messageId} could not be handled`, error);
-      await answer(email, thread, sender, { kind: "system", value: unavailableReply }).catch(
-        (replyError: unknown) => {
-          logger.error("The unavailability reply could not be sent", replyError);
-        },
-      );
+      const text = answerText(email, sender, { kind: "system", value: unavailableReply });
+      if (text !== undefined) {
+        await send(email, text)
+          .then((sent) => record(email, thread, sent))
+          .catch((replyError: unknown) => {
+            logger.error("The unavailability reply could not be sent", replyError);
+          });
+      }
     }
   }
 
@@ -234,19 +270,40 @@ export async function startEmailAdapter(options: EmailAdapterOptions): Promise<{
     await options.mailbox.markSeen(mail.uid);
   }
 
-  // Emails stored before a restart but never handled are handled first, from their original source.
+  // Emails stored before a restart but never handled are handled first, from their original source,
+  // after the answers that were kept but not sent yet.
   async function recoverUnhandled(): Promise<void> {
-    const unhandled = await listUnhandledMessages(db, "EMAIL");
+    const [pending, unhandled] = await Promise.all([
+      listPendingReplies(db, "EMAIL"),
+      listUnhandledMessages(db, "EMAIL"),
+    ]);
+    const prepare = async (stored: { messageId: string; raw: unknown }) => {
+      const source = storedSource.safeParse(stored.raw);
+      if (!source.success) {
+        return undefined;
+      }
+      const email = await parseEmail(Buffer.from(source.data.source, "base64"));
+      return { email, thread: await threadOf(db, email), messageId: stored.messageId };
+    };
+    const toSend = await Promise.all(
+      pending.map(async (stored) => ({ stored, item: await prepare(stored) })),
+    );
+    for (const { stored, item } of toSend) {
+      if (item === undefined) {
+        // Without its source, the email cannot be answered in its thread any more.
+        queue.push(() => markReplySent(db, stored.messageId));
+      } else {
+        queue.push(() => answer(item.email, item.thread, item.messageId, stored.reply));
+      }
+    }
     const prepared = await Promise.all(
       unhandled.map(async (stored) => {
-        const source = storedSource.safeParse(stored.raw);
-        if (!source.success) {
+        const item = await prepare(stored);
+        if (item === undefined) {
           // Stored by an earlier version, without its source: it cannot be read again.
           await markHandled(db, stored.messageId);
-          return undefined;
         }
-        const email = await parseEmail(Buffer.from(source.data.source, "base64"));
-        return { email, thread: await threadOf(db, email), messageId: stored.messageId };
+        return item;
       }),
     );
     // Queued in their order, oldest first.

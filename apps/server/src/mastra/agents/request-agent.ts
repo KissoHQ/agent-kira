@@ -1,5 +1,6 @@
 import { Agent } from "@mastra/core/agent";
 import type { MastraModelConfig } from "@mastra/core/llm";
+import { modelContextTokens } from "@request-agent/core";
 
 const instructions = `You are the request desk agent of a software company. People write to you,
 by email or Slack, about the projects the company builds for them. You file their messages as
@@ -60,7 +61,8 @@ export function createRequestAgent(model: MastraModelConfig): Agent {
     model,
     defaultOptions: {
       // Thinking more than triples the answer time on a CPU (decision 001), so it is turned off.
-      providerOptions: { ollama: { think: false } },
+      // The window is the one of the classifier, so Ollama keeps the model loaded between them.
+      providerOptions: { ollama: { think: false, options: { num_ctx: modelContextTokens } } },
     },
   });
 }

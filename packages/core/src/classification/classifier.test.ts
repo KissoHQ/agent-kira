@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { classificationPromptVersion, createOllamaClassifier } from "./classifier.ts";
-import { valueProbability } from "./ollama.ts";
+import { modelContextTokens, valueProbability } from "./ollama.ts";
 
 // Splits an answer into tokens the way a model would return them, with one probability per token.
 function tokens(parts: [string, number][]) {
@@ -76,7 +76,7 @@ describe("valueProbability", () => {
 });
 
 describe("createOllamaClassifier", () => {
-  it("asks for a structured answer without thinking, and reads the confidence from probabilities", async () => {
+  it("asks for a structured answer without thinking, in the shared context window, and reads the confidence from probabilities", async () => {
     const content = JSON.stringify(answer);
     const ollama = fakeOllama({
       message: { content },
@@ -105,6 +105,7 @@ describe("createOllamaClassifier", () => {
       stream: false,
       think: false,
       logprobs: true,
+      options: { num_ctx: modelContextTokens },
     });
     expect(request?.body.format).toMatchObject({
       type: "object",

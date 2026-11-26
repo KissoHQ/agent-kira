@@ -19,6 +19,35 @@ const envSchema = z.object({
   ),
 });
 
+// Node.js runs a longer timer after 1 ms instead, which would cut every call at once.
+const maxTimerSeconds = Math.floor(2_147_483_647 / 1000);
+
+const timeoutSeconds = (defaultSeconds: number) =>
+  z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().int().min(1).max(maxTimerSeconds).default(defaultSeconds),
+  );
+
+// Longest waits for the model. Their right values depend on the machine that runs Ollama, so they
+// are measured there with `pnpm eval:agent`, as docs/agent.md describes. The defaults were
+// measured on the CPU of a development machine.
+const handlingLimitsEnvSchema = z.object({
+  // One call that classifies a message or judges a duplicate.
+  CLASSIFICATION_TIMEOUT_SECONDS: timeoutSeconds(300),
+  // The whole run of the agent on one message, all its model calls and tools included. A run cut
+  // by it loses the answer of the model: code answers and files the message for a person. So it
+  // must let the longest run allowed by the step limit end.
+  AGENT_TIMEOUT_SECONDS: timeoutSeconds(900),
+  // One call that turns a question into a vector, to search the help articles.
+  EMBEDDING_TIMEOUT_SECONDS: timeoutSeconds(60),
+});
+
+export interface HandlingLimits {
+  classificationTimeoutMs: number;
+  agentTimeoutMs: number;
+  embeddingTimeoutMs: number;
+}
+
 // An empty value in .env means the variable is not set.
 const optionalToken = (prefix: string) =>
   z.preprocess(
@@ -159,6 +188,15 @@ function parse<T>(schema: z.ZodType<T>, source: NodeJS.ProcessEnv): T {
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   return parse(envSchema, source);
+}
+
+export function loadHandlingLimits(source: NodeJS.ProcessEnv = process.env): HandlingLimits {
+  const env = parse(handlingLimitsEnvSchema, source);
+  return {
+    classificationTimeoutMs: env.CLASSIFICATION_TIMEOUT_SECONDS * 1000,
+    agentTimeoutMs: env.AGENT_TIMEOUT_SECONDS * 1000,
+    embeddingTimeoutMs: env.EMBEDDING_TIMEOUT_SECONDS * 1000,
+  };
 }
 
 // The Slack tokens, or undefined when Slack is not configured.

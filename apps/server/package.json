@@ -10,6 +10,7 @@
     "start": "mastra start --env ../../.env",
     "demo:email": "node --env-file-if-exists=../../.env scripts/demo-email.ts",
     "demo:widget": "node --env-file-if-exists=../../.env scripts/demo-widget.ts",
+    "eval:agent": "vitest run --config vitest.eval.config.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

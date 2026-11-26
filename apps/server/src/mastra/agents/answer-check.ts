@@ -161,8 +161,11 @@ export function toPlainText(text: string): string {
 }
 
 // Checks each final answer of the model, before it ends the run. A rejected answer is sent back to
-// the model with its problems, as many times as maxAnswerRetries allows.
-export function createAnswerCheck(context: () => AnswerContext): OutputProcessor {
+// the model with its problems, as many times as maxAnswerRetries allows, and told to onRejected.
+export function createAnswerCheck(
+  context: () => AnswerContext,
+  onRejected: () => void = () => undefined,
+): OutputProcessor {
   return {
     id: "answer-check",
     processOutputStep: ({ text, toolCalls, abort, messageList }) => {
@@ -171,6 +174,7 @@ export function createAnswerCheck(context: () => AnswerContext): OutputProcessor
       }
       const problems = answerProblems(text ?? "", context());
       if (problems.length > 0) {
+        onRejected();
         abort(`Your answer cannot be sent. ${problems.join(" ")}`, { retry: true });
       }
       return messageList;

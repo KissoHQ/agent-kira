@@ -49,7 +49,7 @@ The agent works only through thirteen typed tools: `identify_contact`, `identify
 - A verified sender reaches only the requests of the projects they work on, the requests they made, and the help articles of their projects. Any other request answers "not found". A sender changes only the requests they made, and a person of the team then checks the change. An unverified sender only gets the tools to file the message, which then waits for a human review.
 - Text that other people wrote, such as the title of another person's request, reaches the model marked as data, like the message itself.
 - The project is identified by fixed rules before the model runs: a channel dedicated to a project, then a project key written in the message, then the only project of the sender. When several projects remain possible, the result is ambiguous and the model cannot pick one at random.
-- The model makes at most 8 calls per message, tool inputs have bounded sizes, a message is filed only once, and every change is written to the request history.
+- The model makes at most 8 steps per message, within a time limit, tool inputs have bounded sizes, a message is filed only once, and every change is written to the request history.
 - The agent writes the answer, and the code checks it before it is sent: no request that no tool returned, no codes, no promise that nobody keeps, no false claim that a question was passed to the team. When no answer passes, the code writes it from what the tools did. A question the data cannot answer is passed to the team, and a message the agent leaves unhandled is filed for a review, so none is lost.
 - Each part connects to the database with its own restricted role. The agent server uses `request_agent_server`: it cannot read or write the accounts of the team, change what a message said, nor delete anything. The web interface uses `request_agent_app`, which cannot change the schema or rewrite the history, and only deletes the links between contacts or channels and projects. Their passwords are sent to the database as SCRAM-SHA-256 verifiers, never in clear.
 
@@ -431,6 +431,7 @@ Files take space under the quota of the widget (`WIDGET_ATTACHMENTS_QUOTA_MB`, 2
 | `pnpm format:check`        | Formatting with Prettier. `pnpm format` fixes it                                                                                                                                                                                                                                                                             |
 | `pnpm eval:classification` | Quality of the classifier on labeled messages, with the real model. Needs Ollama and takes 30 to 60 minutes on a CPU, so it is not part of `pnpm test`                                                                                                                                                                       |
 | `pnpm eval:duplicates`     | Quality of the duplicate check on labeled messages and their candidates, with the real model. Needs Ollama and takes about 15 minutes on a CPU                                                                                                                                                                               |
+| `pnpm eval:agent`          | Calls, tokens and time of the agent on fictitious messages, with the real model, and the limits computed from them ([`docs/agent.md`](docs/agent.md#limits-of-a-run)). Needs Ollama and takes about 50 minutes on a CPU                                                                                                      |
 
 ## Project structure
 
@@ -451,6 +452,7 @@ agent-kira/
 │       ├── slack-app-manifest.yaml Settings of the Slack app
 │       ├── scripts/demo-email.ts   Sends a demonstration email and waits for the answer
 │       ├── scripts/demo-widget.ts  Demo page of a customer portal that embeds the widget
+│       ├── eval/                   Fictitious messages to measure the agent with the real model
 │       └── src/
 │           ├── config.ts           Environment variables validation
 │           ├── channel-handler.ts  Database and agent shared by the channel adapters

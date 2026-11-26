@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { loadEmailEnv, loadEnv, loadSlackTokens, loadWidgetEnv } from "./config";
+import {
+  loadEmailEnv,
+  loadEnv,
+  loadHandlingLimits,
+  loadSlackTokens,
+  loadWidgetEnv,
+} from "./config";
 
 const validEnv = {
   OLLAMA_BASE_URL: "http://127.0.0.1:11434/api",
@@ -43,6 +49,53 @@ describe("loadEnv", () => {
 
   it("rejects a missing model", () => {
     expect(() => loadEnv({ OLLAMA_BASE_URL: validEnv.OLLAMA_BASE_URL })).toThrow(/OLLAMA_MODEL/);
+  });
+});
+
+describe("loadHandlingLimits", () => {
+  it("keeps the limits measured on a CPU when none is set, including with empty values", () => {
+    const defaults = {
+      classificationTimeoutMs: 300_000,
+      agentTimeoutMs: 900_000,
+      embeddingTimeoutMs: 60_000,
+    };
+    expect(loadHandlingLimits({})).toEqual(defaults);
+    expect(
+      loadHandlingLimits({
+        CLASSIFICATION_TIMEOUT_SECONDS: "",
+        AGENT_TIMEOUT_SECONDS: "",
+        EMBEDDING_TIMEOUT_SECONDS: "",
+      }),
+    ).toEqual(defaults);
+  });
+
+  it("reads the limits measured on the machine that runs Ollama, in seconds", () => {
+    expect(
+      loadHandlingLimits({
+        CLASSIFICATION_TIMEOUT_SECONDS: "30",
+        AGENT_TIMEOUT_SECONDS: "240",
+        EMBEDDING_TIMEOUT_SECONDS: "5",
+      }),
+    ).toEqual({
+      classificationTimeoutMs: 30_000,
+      agentTimeoutMs: 240_000,
+      embeddingTimeoutMs: 5000,
+    });
+  });
+
+  it.each(["0", "-5", "1.5", "ten", "2147484"])(
+    "rejects %s, which is not a whole number of seconds a timer of Node.js can wait",
+    (value) => {
+      expect(() => loadHandlingLimits({ AGENT_TIMEOUT_SECONDS: value })).toThrow(
+        /AGENT_TIMEOUT_SECONDS/,
+      );
+    },
+  );
+
+  it("accepts the longest wait a timer of Node.js can hold", () => {
+    expect(loadHandlingLimits({ AGENT_TIMEOUT_SECONDS: "2147483" }).agentTimeoutMs).toBe(
+      2_147_483_000,
+    );
   });
 });
 

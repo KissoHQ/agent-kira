@@ -27,6 +27,7 @@
     "test": "pnpm -r --workspace-concurrency=1 test",
     "eval:classification": "pnpm --filter @request-agent/core eval:classification",
     "eval:duplicates": "pnpm --filter @request-agent/core eval:duplicates",
+    "eval:agent": "pnpm --filter @request-agent/server eval:agent",
     "demo:email": "pnpm --filter @request-agent/server demo:email",
     "demo:widget": "pnpm --filter @request-agent/server demo:widget",
     "lint": "oxlint",

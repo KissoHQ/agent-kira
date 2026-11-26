@@ -1,6 +1,6 @@
 # 001 — Local language model with Ollama
 
-- Status: accepted
+- Status: accepted, revised by [decision 012](012-eve-agent.md)
 - Date: 2026-10-27
 
 ## Context
@@ -42,6 +42,10 @@ The model and the Ollama address are read from environment variables (`OLLAMA_MO
 - Each answer takes from about 20 s to 90 s on the CPU. This is acceptable for asynchronous channels such as Slack and email.
 - No model guessed correctly when a sender works on two projects. The project and the contact will therefore be identified in the code before the model is called, and an ambiguity will lead to a clarification question instead of a guess.
 - A hosted model can be evaluated later with fictitious data only, by changing the provider in `apps/server/src/mastra/index.ts`.
+
+## Revision: the agent built with eve (November 2026)
+
+The agent now runs in its own process, built with eve ([decision 012](012-eve-agent.md)). The model is still `ornith:9b` on Ollama, through the same provider: a hosted model would be set in `apps/agent/agent/agent.ts`. eve sends no usage statistics (`EVE_TELEMETRY_DISABLED=1`) and no message leaves the machine.
 
 ## Sources
 

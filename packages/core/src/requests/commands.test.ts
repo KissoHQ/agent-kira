@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { alice, bruno, classified, storeMessage } from "../../test/fixtures.ts";
@@ -575,6 +575,43 @@ describe("requestClarification", () => {
     const result = await requestClarification(getAppDatabase(), last, { question: "Encore ?" });
 
     expect(result).toEqual({ ok: false, error: "CLARIFICATION_LIMIT" });
+    const asked = await getDatabase()
+      .select()
+      .from(events)
+      .where(eq(events.type, "CLARIFICATION_REQUESTED"));
+    expect(asked).toHaveLength(maxClarifications);
+  });
+});
+
+describe("requestClarification under concurrency", () => {
+  it("never passes the limit when two answers of one request are handled at the same time", async () => {
+    const first = await turnFor(alice, { thread: "race" });
+    await requestClarification(getAppDatabase(), first, { question: "Quel projet ?" });
+    const [request] = await getDatabase().select().from(requests);
+    // Stored one after the other: the fixture numbers the messages.
+    const firstAnswer = await turnFor(alice, { thread: "race" });
+    const answers = [firstAnswer, await turnFor(alice, { thread: "race" })] as const;
+    await getDatabase()
+      .update(messages)
+      .set({ requestId: request?.id })
+      .where(inArray(messages.id, [answers[0].messageId, answers[1].messageId]));
+
+    // A person holds the request: both handlings wait for it, then run one after the other.
+    let pending: Promise<Awaited<ReturnType<typeof requestClarification>>[]> | undefined;
+    await getDatabase().transaction(async (tx) => {
+      await tx.execute(sql`select id from requests where id = ${request?.id} for update`);
+      pending = Promise.all(
+        answers.map((answer) =>
+          requestClarification(getAppDatabase(), answer, { question: "Lequel ?" }),
+        ),
+      );
+      await waitForBlockedQueries(2);
+    });
+    const results = (await pending) ?? [];
+
+    expect(results.filter((result) => !result.ok)).toEqual([
+      { ok: false, error: "CLARIFICATION_LIMIT" },
+    ]);
     const asked = await getDatabase()
       .select()
       .from(events)

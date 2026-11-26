@@ -5,7 +5,8 @@ import { loadAppDatabaseEnv, loadDatabaseEnv } from "../src/env.ts";
 
 const { DATABASE_URL } = loadDatabaseEnv();
 const { APP_DATABASE_URL } = loadAppDatabaseEnv();
-const { db, close } = connectDatabase(DATABASE_URL);
+// A migration may build an index on a large table: it runs without the statement limit of the app.
+const { db, close } = connectDatabase(DATABASE_URL, { statementTimeoutMs: 0 });
 try {
   await migrateDatabase(db);
   await configureAppRole(db, APP_DATABASE_URL);

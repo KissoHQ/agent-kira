@@ -426,6 +426,23 @@ describe("actions", () => {
     expect((await record(reference)).status).toBe("NEW");
   });
 
+  it("refuses an original that is itself a closed duplicate, and says which to choose", async () => {
+    const cookie = await signIn();
+    const original = await portalRequest("Le portail plante.");
+    const repeated = await portalRequest("Le portail plante encore.");
+    await post(`/requests/${repeated}/duplicate`, { duplicateOf: original }, { cookie });
+
+    const response = await post(
+      `/requests/${original}/duplicate`,
+      { duplicateOf: repeated },
+      { cookie },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("elle-même un doublon fermé");
+    expect((await record(original)).status).toBe("NEW");
+  });
+
   it("changes the status of a request", async () => {
     const cookie = await signIn();
     const reference = await portalRequest("Le portail plante.");

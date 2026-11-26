@@ -171,20 +171,47 @@ export function reviewRequest(
   });
 }
 
+// Locks two requests in one statement, in the order of their numbers, so two people marking them
+// against each other at the same time wait for one another instead of blocking each other.
+async function lockPair(
+  tx: Transaction,
+  first: string,
+  second: string,
+): Promise<[RequestRow | undefined, RequestRow | undefined]> {
+  const firstNumber = parseReference(first);
+  const secondNumber = parseReference(second);
+  const numbers = [firstNumber, secondNumber].filter((value) => value !== undefined);
+  if (numbers.length === 0) {
+    return [undefined, undefined];
+  }
+  const rows = await tx
+    .select()
+    .from(requests)
+    .where(inArray(requests.number, numbers))
+    .orderBy(asc(requests.number))
+    .for("update");
+  const find = (value: number | undefined) => rows.find((row) => row.number === value);
+  return [find(firstNumber), find(secondNumber)];
+}
+
 // A person found that the request repeats another one: it is closed and points to the original.
 export function markDuplicate(
   db: Database,
   reviewer: Reviewer,
   input: MarkDuplicateInput,
-): Promise<Result<RequestView, "NOT_FOUND" | "SAME_REQUEST">> {
+): Promise<Result<RequestView, "NOT_FOUND" | "SAME_REQUEST" | "ORIGINAL_IS_DUPLICATE">> {
   return db.transaction(async (tx) => {
-    const request = await lockRequest(tx, input.reference);
-    const original = await lockRequest(tx, input.duplicateOf);
+    const [request, original] = await lockPair(tx, input.reference, input.duplicateOf);
     if (request === undefined || original === undefined) {
       return fail("NOT_FOUND");
     }
     if (request.id === original.id) {
       return fail("SAME_REQUEST");
+    }
+    // A closed duplicate already points to its own original: pointing to it would build chains,
+    // and a loop when two requests are marked against each other.
+    if (original.status === "CLOSED" && original.duplicateOfRequestId !== null) {
+      return fail("ORIGINAL_IS_DUPLICATE");
     }
     await tx
       .update(requests)

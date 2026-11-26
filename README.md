@@ -1,6 +1,6 @@
 # agent-kira
 
-Multi-channel AI agent that centralizes requests about the company's projects. It receives messages from Slack and from a dedicated mailbox, understands them, classifies them and stores them as structured requests that can be found, followed and updated. The agent core is built with [Mastra](https://mastra.ai) and runs on a local language model through [Ollama](https://ollama.com).
+Multi-channel AI agent that centralizes requests about the company's projects. It receives messages from Slack and from a dedicated mailbox, understands them, classifies them and stores them as structured requests that can be found, followed and updated. The agent is built with [eve](https://github.com/vercel/eve) and runs on a local language model through [Ollama](https://ollama.com).
 
 ## Status
 
@@ -9,7 +9,7 @@ The P0 and P1 scope of the brief is in place: the Slack and Email channels, the 
 | Feature                                                       | Priority | Status      |
 | ------------------------------------------------------------- | -------- | ----------- |
 | Monorepo, TypeScript, lint, format and test tooling           | —        | Done        |
-| Mastra agent connected to a local Ollama model                | P0       | Done        |
+| eve agent connected to a local Ollama model                   | P0       | Done        |
 | Local PostgreSQL database                                     | P0       | Done        |
 | Data model and structured storage with history and provenance | P0       | Done        |
 | Typed tools (create, update, find, list, status, search)      | P0       | Done        |
@@ -31,7 +31,7 @@ flowchart LR
     Email["Email<br/>IMAP and SMTP"] --> Handler
     Handler --> Classifier["Classifier<br/>packages/core"]
     Classifier --> Ollama
-    Handler --> Agent[Request agent]
+    Handler --> Agent["Request agent<br/>apps/agent, built with eve"]
     Agent --> Ollama["Ollama<br/>local model"]
     Agent --> Tools["Request tools<br/>built for each message"]
     Tools --> Core["Business core<br/>packages/core"]
@@ -45,13 +45,13 @@ Each message is first classified by a separate call to the model, which gives it
 
 The agent works only through thirteen typed tools: `identify_contact`, `identify_project`, `create_request`, `request_clarification`, `update_request`, `find_request`, `list_project_requests`, `list_my_requests`, `get_request_status`, `add_message_to_request`, `search_requests`, `forward_to_team` and `search_knowledge_base`, which finds the help articles of the sender's projects by meaning ([decision 010](docs/decisions/010-knowledge-base.md)). Every message is written by someone outside the system, so the design assumes a message can try to manipulate the model, and limits what it can obtain:
 
-- The tools are built for each message, bound to its sender in the code. They are not registered on the Mastra server, so its HTTP API cannot run them, and neither the model nor a client can change who they act for.
+- The agent runs in its own process, which only the server reaches, on the internal network and with a password. The tools are built for each message, bound to the sender that the server verified: neither the model nor a client can change who they act for. The agent has no tool to run code, read files or reach the web.
 - A verified sender reaches only the requests of the projects they work on, the requests they made, and the help articles of their projects. Any other request answers "not found". A sender changes only the requests they made, and a person of the team then checks the change. An unverified sender only gets the tools to file the message, which then waits for a human review.
 - Text that other people wrote, such as the title of another person's request, reaches the model marked as data, like the message itself.
 - The project is identified by fixed rules before the model runs: a channel dedicated to a project, then a project key written in the message, then the only project of the sender. When several projects remain possible, the result is ambiguous and the model cannot pick one at random.
 - The model makes at most 8 steps per message, within a time limit, tool inputs have bounded sizes, a message is filed only once, and every change is written to the request history.
 - The agent writes the answer, and the code checks it before it is sent: no request that no tool returned, no codes, no promise that nobody keeps, no false claim that a question was passed to the team. When no answer passes, the code writes it from what the tools did. A question the data cannot answer is passed to the team, and a message the agent leaves unhandled is filed for a review, so none is lost.
-- Each part connects to the database with its own restricted role. The agent server uses `request_agent_server`: it cannot read or write the accounts of the team, change what a message said, nor delete anything. The web interface uses `request_agent_app`, which cannot change the schema or rewrite the history, and only deletes the links between contacts or channels and projects. Their passwords are sent to the database as SCRAM-SHA-256 verifiers, never in clear.
+- Each part connects to the database with its own restricted role. The server and the agent use `request_agent_server`: it cannot read or write the accounts of the team, change what a message said, nor delete anything. The web interface uses `request_agent_app`, which cannot change the schema or rewrite the history, and only deletes the links between contacts or channels and projects. Their passwords are sent to the database as SCRAM-SHA-256 verifiers, never in clear.
 
 The parts of the system, the path of a message and how to add a channel are described in [`docs/architecture.md`](docs/architecture.md). The reasons behind the main technical choices are recorded in [`docs/decisions/`](docs/decisions/).
 
@@ -96,14 +96,16 @@ cp .env.example .env
 | `POSTGRES_PORT`                                                            | Port of the database on the machine (localhost only)                                                                                            | `5433`                                                                           |
 | `DATABASE_URL`                                                             | Connection to the development database, as its owner. Used by the migrations and the demo data                                                  | `postgresql://request_agent:change-me@127.0.0.1:5433/request_agent`              |
 | `APP_DATABASE_URL`                                                         | Connection used by the application, with the restricted `request_agent_app` role                                                                | `postgresql://request_agent_app:change-me-too@127.0.0.1:5433/request_agent`      |
-| `SERVER_DATABASE_URL`                                                      | Connection used by the agent server, with the `request_agent_server` role, which has fewer rights still                                         | `postgresql://request_agent_server:change-me-three@127.0.0.1:5433/request_agent` |
+| `SERVER_DATABASE_URL`                                                      | Connection used by the server and the agent, with the `request_agent_server` role, which has fewer rights still                                 | `postgresql://request_agent_server:change-me-three@127.0.0.1:5433/request_agent` |
 | `TEST_DATABASE_URL`                                                        | Connection to the test database. Its name must end with `_test`                                                                                 | `postgresql://request_agent:change-me@127.0.0.1:5433/request_agent_test`         |
 | `OLLAMA_BASE_URL`                                                          | Ollama API endpoint. Must end with `/api`                                                                                                       | `http://127.0.0.1:11434/api`                                                     |
-| `OLLAMA_MODEL`                                                             | Model used by the agent. It must be pulled first                                                                                                | `ornith:9b`                                                                      |
+| `OLLAMA_MODEL`                                                             | Model used by the classifier and the agent. It must be pulled first                                                                             | `ornith:9b`                                                                      |
 | `OLLAMA_EMBEDDING_MODEL`                                                   | Optional. Model of the knowledge base, with vectors of 1024 numbers. It must be pulled first                                                    | `qwen3-embedding:0.6b` (default)                                                 |
-| `MASTRA_HOST`                                                              | Optional. Address the agent server listens on, for `/health` and `/ready`. Keep it on this machine: Mastra reads JSON bodies whole              | `127.0.0.1` (default)                                                            |
+| `AGENT_PASSWORD`                                                           | Password the server gives to call the agent, which runs in its own process. At least 32 characters                                              | output of `openssl rand -hex 32`                                                 |
+| `AGENT_URL`                                                                | Optional. Address of the agent, as the server reaches it                                                                                        | `http://127.0.0.1:4120` (default)                                                |
+| `SERVER_HOST`, `SERVER_PORT`                                               | Optional. Address and port of `/health` and `/ready` of the server. Keep them on this machine                                                   | `127.0.0.1`, `4111` (default)                                                    |
 | `OLLAMA_API_KEY`                                                           | Optional. Bearer token of an authenticating proxy in front of a remote Ollama                                                                   | —                                                                                |
-| `LOG_LEVEL`                                                                | Optional. Level of the logs of the agent server: `debug`, `info`, `warn` or `error`                                                             | `info` (default)                                                                 |
+| `LOG_LEVEL`                                                                | Optional. Level of the logs of the server: `debug`, `info`, `warn` or `error`                                                                   | `info` (default)                                                                 |
 | `CLASSIFICATION_REVIEW_THRESHOLD`                                          | Optional. Below this confidence, from 0 to 1, a request waits for a human review                                                                | `0.8` (default)                                                                  |
 | `SLACK_BOT_TOKEN`                                                          | Optional. Bot token of the Slack app. Without the two Slack tokens, the server runs without Slack                                               | `xoxb-…`                                                                         |
 | `SLACK_APP_TOKEN`                                                          | Optional. App-level token with the `connections:write` scope, for Socket Mode                                                                   | `xapp-…`                                                                         |
@@ -157,28 +159,26 @@ Ollama must be running. Start it in a separate terminal if it is not already run
 ollama serve
 ```
 
-Development mode, with reload on file changes:
+The agent runs in its own process. Build it, then start it in a separate terminal. It listens on `127.0.0.1:4120`, where the server reaches it with `AGENT_PASSWORD`:
+
+```bash
+pnpm build
+pnpm agent
+```
+
+Build it again after a change in `apps/agent` or in the business core. Then start the server, with reload on file changes:
 
 ```bash
 pnpm dev
 ```
 
-The API is available on `http://localhost:4111/api` and Mastra Studio, the built-in interface to test the agent, on `http://localhost:4111`. They have no sign-in, so they answer only requests addressed to this machine (`localhost`, `127.0.0.1`), and refuse those sent by a page of another site open in the browser.
-
-The built server (`pnpm start`) serves neither the API nor Studio: only `/health` and `/ready`. The widget listens apart, on `WIDGET_PORT` (4113). The channels call the agent inside the server and never need its API.
-
-Production build and start:
-
-```bash
-pnpm build
-pnpm start
-```
+`pnpm start` starts it without reload. The server answers `/health` and `/ready` on `127.0.0.1:4111`, and the widget listens apart, on `WIDGET_PORT` (4113). The agent answers only its internal route, with its password: eve's own API is removed.
 
 ## Deployment
 
-KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the database, a step that applies the migrations, the agent server and the web interface. Their images are built from `Dockerfile` and run as an unprivileged user. Ollama runs apart, on a machine with enough memory, ideally with a GPU: on a CPU, an answer takes from 2 to 8 minutes.
+KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the database, a step that applies the migrations, the server, the agent and the web interface. Their images are built from `Dockerfile` and run as an unprivileged user. Ollama runs apart, on a machine with enough memory, ideally with a GPU: on a CPU, an answer takes from 2 to 8 minutes.
 
-The web interface (port 4112) and the widget (port 4113) open no port of the server: a reverse proxy reaches them through the network of Docker and serves them over HTTPS. The Mastra server of the agent, on port 4111, listens inside its container only. KIRA needs, besides the server:
+The web interface (port 4112) and the widget (port 4113) open no port of the server: a reverse proxy reaches them through the network of Docker and serves them over HTTPS. `/health` and `/ready` of the server, on port 4111, listen inside its container only. The agent, on port 4120, is reached by the server only, through the network of Docker; it needs no domain. KIRA needs, besides the server:
 
 - two domain names, such as `kira.example.com` for the web interface and `widget.example.com` for the widget, each with a DNS `A` record to the address of the server, created before the HTTPS certificates are requested;
 - ports 80 and 443 of the server open from the Internet, for the reverse proxy and its certificates;
@@ -192,12 +192,13 @@ These variables differ from a local install. Everything else comes from `.env.ex
 | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`, `APP_DATABASE_URL`, `SERVER_DATABASE_URL`                 | Host `postgres:5432`, the database service of the Compose file, such as `postgresql://request_agent_app:…@postgres:5432/request_agent` |
 | `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`                                       | Address of Ollama as the containers reach it, and the key of the proxy in front of it, if any                                          |
+| `AGENT_PASSWORD`                                                          | A new random value, such as the output of `openssl rand -hex 32`, never the one of a local install                                     |
 | `WEB_PUBLIC_ORIGIN`, `WEB_TRUST_PROXY`                                    | Address of the interface, such as `https://kira.example.com`, and `true`                                                               |
 | `WIDGET_ALLOWED_ORIGINS`, `WIDGET_IDENTITY_SECRETS`, `WIDGET_TRUST_PROXY` | Origins and secrets of the applications that embed the widget, and `true`                                                              |
 | `EMAIL_*`                                                                 | The real mailbox, over TLS (see [Connecting email](#connecting-email)), or removed to run without email                                |
 | `LOCAL_MAIL_*`, `TEST_*`, `POSTGRES_PORT`                                 | Removed: they serve the local mail server, the tests and the local database only                                                       |
 
-`MASTRA_HOST`, `WIDGET_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file, which take precedence over `.env`. Both trust settings are `true` because the reverse proxy replaces any `X-Forwarded-For` the person sends with their real address: Traefik does so by default.
+`SERVER_HOST`, `AGENT_URL`, `WIDGET_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file, which take precedence over `.env`. The agent receives only the variables it needs: the Ollama settings, `SERVER_DATABASE_URL` and `AGENT_PASSWORD`. Both trust settings are `true` because the reverse proxy replaces any `X-Forwarded-For` the person sends with their real address: Traefik does so by default.
 
 ### With Dokploy
 
@@ -210,14 +211,14 @@ These variables differ from a local install. Everything else comes from `.env.ex
    - service `server`, container port `4113`, host `widget.example.com`, HTTPS on, certificate `letsencrypt`.
 4. Deploy. Dokploy runs `docker compose -p <app name> -f compose.production.yaml up -d --build`: the migrations run first. Every later deployment, including one for a domain change, does the same.
 
-Traefik sends no one to a container whose health check fails. The health check of the agent server therefore reads `/health`, which says the process answers: the widget keeps receiving messages while Ollama is down, and the team answers them. `/ready` tells what is missing (see [Checking](#checking)).
+Traefik sends no one to a container whose health check fails. The health check of the server therefore reads `/health`, which says the process answers: the widget keeps receiving messages while Ollama is down, and the team answers them. `/ready` tells what is missing (see [Checking](#checking)).
 
 The commands below run in a terminal on the server, in the folder where Dokploy fetched the code, `/etc/dokploy/compose/<app name>/code`, with `-p <app name>` added after `docker compose`. `<app name>` is the name Dokploy shows for the service.
 
 ### On another server
 
 1. Get the code on the server and create `.env` from `.env.example`, with the variables of [Settings](#settings).
-2. Build and start everything. `compose.host-proxy.yaml` publishes the two services on this machine only, for a reverse proxy installed on the server itself. The `migrate` service applies the migrations and sets the passwords of the roles; the agent server and the web interface start once it succeeded:
+2. Build and start everything. `compose.host-proxy.yaml` publishes the two services on this machine only, for a reverse proxy installed on the server itself. The `migrate` service applies the migrations and sets the passwords of the roles; the server, the agent and the web interface start once it succeeded:
 
    ```bash
    docker compose -f compose.production.yaml -f compose.host-proxy.yaml up -d --build
@@ -239,7 +240,7 @@ docker compose -f compose.production.yaml run --rm -it tools node packages/core/
 
 ### Checking
 
-`/ready` checks the database, and for the agent server the model in Ollama and the start of each channel, and answers 503 with what is missing. Its checks run at most once every 5 seconds:
+`/ready` checks the database, and for the server the model in Ollama, the agent and the start of each channel, and answers 503 with what is missing. Its checks run at most once every 5 seconds:
 
 ```bash
 docker compose -f compose.production.yaml ps
@@ -247,7 +248,7 @@ docker compose -f compose.production.yaml exec server node -e "fetch('http://127
 docker compose -f compose.production.yaml exec web node -e "fetch('http://127.0.0.1:4112/ready').then((r) => r.text()).then(console.log)"
 ```
 
-`ps` shows a service `healthy` once its process answers. The logs are read with `docker compose -f compose.production.yaml logs -f server web`; `LOG_LEVEL` sets their level. Mastra sends no usage statistics: `MASTRA_TELEMETRY_DISABLED` is set.
+`ps` shows a service `healthy` once its process answers; the agent is `healthy` once it reaches the database. The logs are read with `docker compose -f compose.production.yaml logs -f server agent web`; `LOG_LEVEL` sets the level of the server. eve sends no usage statistics: the image of the agent sets `EVE_TELEMETRY_DISABLED`.
 
 ### Maintenance
 
@@ -265,11 +266,11 @@ To erase a person on the server (see [Personal data](#personal-data)):
 docker compose -f compose.production.yaml run --rm tools node packages/core/scripts/erase-contact.ts --email bruno.leroy@globex.example --confirm
 ```
 
-The agent server and the web interface each run as one container: they keep the queue of messages and the limits of sign-in and of the widget in memory.
+The server, the agent and the web interface each run as one container: the server and the web interface keep the queue of messages and the limits of sign-in and of the widget in memory, and the agent keeps the session of each message in its own volume until the message is handled.
 
 ## Web interface
 
-The team consults the requests and validates the decisions of the agent in a web interface, started separately from the agent server. It needs the database only.
+The team consults the requests and validates the decisions of the agent in a web interface, started separately from the server. It needs the database only.
 
 1. Create the first administrator. The command asks for the password twice, without showing it, and requires at least 15 characters. Running it again for the same email sets a new password and ends the open sessions:
 
@@ -314,7 +315,7 @@ To load your own articles, write one Markdown file per article, in a folder per 
 
 Client applications embed the widget with one script tag: their users write to the agent from the application, attach files or a capture of their screen, and follow the answer and the status of their request. The application signs the identity of the person signed in, so the agent knows who writes. How to embed it and sign the identity is described in [`docs/widget.md`](docs/widget.md), and the choices in [decision 011](docs/decisions/011-web-widget.md).
 
-To try it locally, set `WIDGET_ALLOWED_ORIGINS`, `WIDGET_IDENTITY_SECRETS` and `ATTACHMENTS_DIR` as [`docs/widget.md`](docs/widget.md) shows, start the agent server, then open the demo page of a fictitious customer portal:
+To try it locally, set `WIDGET_ALLOWED_ORIGINS`, `WIDGET_IDENTITY_SECRETS` and `ATTACHMENTS_DIR` as [`docs/widget.md`](docs/widget.md) shows, start the agent and the server, then open the demo page of a fictitious customer portal:
 
 ```bash
 pnpm demo:widget
@@ -396,16 +397,6 @@ The demonstration of both scenarios, with the expected results, is in [`docs/dem
 pnpm demo:email
 ```
 
-With `pnpm dev`, the API of the Mastra server can also be called directly. Send a message to the agent:
-
-```bash
-curl -X POST http://localhost:4111/api/agents/request-agent/generate \
-  -H 'Content-Type: application/json' \
-  -d '{"messages":[{"role":"user","content":"Bonjour"}]}'
-```
-
-The JSON response contains the answer in the `text` field. This route reaches the agent without its request tools: they are only given to messages received through a channel, such as Slack.
-
 ## Personal data
 
 A person who asks for their data to be erased (GDPR, article 17) is erased with one command, as the owner of the database. Without `--confirm`, it only shows what it would erase:
@@ -448,17 +439,29 @@ agent-kira/
 │   │       ├── sign-in-limiter.ts  Refuses sign-in for a while after repeated failures
 │   │       ├── password-checks.ts  Bounds the password checks running and waiting at once
 │   │       └── views/              Pages, rendered on the server, and their labels in French
-│   └── server/                     Mastra server
+│   ├── agent/                      Agent built with eve, in its own process
+│   │   ├── agent/
+│   │   │   ├── agent.ts            Model, context window, no tool of eve, deletion of the sessions
+│   │   │   ├── instructions.md     Instructions of the agent
+│   │   │   ├── instructions/       Information computed by the server for each message
+│   │   │   ├── tools/requests.ts   The thirteen tools, built for the sender of each message
+│   │   │   ├── hooks/step-limit.ts Stops the model at the step limit of the message
+│   │   │   ├── channels/kira.ts    The only route: the server sends each message, with the password
+│   │   │   └── lib/                Settings, turn of the session, tools and what they did
+│   │   └── test/                   The agent of the tests, with a scripted model, and its setup
+│   └── server/                     Server: channels, classification, answer check, delivery
 │       ├── slack-app-manifest.yaml Settings of the Slack app
 │       ├── scripts/demo-email.ts   Sends a demonstration email and waits for the answer
 │       ├── scripts/demo-widget.ts  Demo page of a customer portal that embeds the widget
 │       ├── eval/                   Fictitious messages to measure the agent with the real model
 │       └── src/
+│           ├── main.ts             Starts the server: logs, /health, /ready and the channels
 │           ├── config.ts           Environment variables validation
+│           ├── logger.ts           One line per event on the standard output
 │           ├── channel-handler.ts  Database and agent shared by the channel adapters
 │           ├── reliable-handling.ts  Retries, and filing for a person after the last failure
 │           ├── retry.ts            Waits before reaching again a service that is down
-│           ├── readiness.ts        /ready: database, model and channels
+│           ├── readiness.ts        /health and /ready: database, model, agent and channels
 │           ├── scenarios.test.ts   Email → Agent → Request and Slack → Agent → Request, end to end
 │           ├── email/
 │           │   ├── parse.ts        Reads an email: sender, thread, new text, attachments
@@ -472,23 +475,17 @@ agent-kira/
 │           │   ├── identity.ts     Identity of the person, signed by the application
 │           │   ├── files.ts        Attached files: count, size and type read from the content
 │           │   ├── admission.ts    Limits of the public widget: rate, waiting messages, uploads
-│           │   └── start.ts        Routes on the Mastra server, started when the widget is configured
+│           │   └── start.ts        Starts the widget on its own port when it is configured
 │           ├── slack/
 │           │   ├── events.ts       Which Slack events reach the agent
 │           │   ├── adapter.ts      Stores, queues and answers Slack messages
 │           │   ├── connect.ts      Socket Mode and Web API clients
 │           │   └── start.ts        Starts Slack with the server when it is configured
-│           └── mastra/
-│               ├── index.ts        Mastra entry point: registers the agent
-│               ├── api-guard.ts    Closes the Mastra API outside development
-│               ├── agents/
-│               │   ├── request-agent.ts   Agent and its instructions
-│               │   ├── handle-message.ts  Runs the agent on one message, with its tools
-│               │   ├── answer-check.ts    Checks the answer of the agent before it is sent
-│               │   └── reply.ts           Answer written by code when no answer passes
-│               └── tools/
-│                   ├── request-tools.ts   The thirteen tools of the agent
-│                   └── explain.ts         Codes of the database in plain words
+│           └── agent/
+│               ├── client.ts       Calls the agent on its route, with its password
+│               ├── handle-message.ts  Classifies a message, has the agent handle it, files what it left
+│               ├── answer-check.ts    Checks the answer of the agent before it is sent
+│               └── reply.ts        Answer written by code when no answer passes
 ├── packages/
 │   └── core/                       Business core, independent of any channel
 │       ├── drizzle/                SQL migrations, generated from the schema
@@ -497,6 +494,10 @@ agent-kira/
 │       ├── src/
 │       │   ├── env.ts              Environment variables validation
 │       │   ├── untrusted.ts        Wraps text written by senders before a model reads it
+│       │   ├── agent/
+│       │   │   ├── protocol.ts     What the server and the agent send each other, and the limits
+│       │   │   ├── tool-outcome.ts What each tool of the agent did
+│       │   │   └── explain.ts      Codes of the database in plain words, for the model
 │       │   ├── messages/
 │       │   │   ├── inbox.ts        Stores channel messages once, with their conversation
 │       │   │   ├── conversation.ts What a conversation said, where it started, who wrote in it
@@ -558,9 +559,9 @@ agent-kira/
 │   └── pull_request_template.md
 ├── .env.example                    Configuration template
 ├── compose.yaml                    Local PostgreSQL database and mail server
-├── compose.production.yaml         KIRA on one server: database, migrations, agent server, web interface
+├── compose.production.yaml         KIRA on one server: database, migrations, server, agent, web interface
 ├── compose.host-proxy.yaml         Publishes the two services on the server, for a proxy installed on it
-├── Dockerfile                      Images of the agent server and of the web interface
+├── Dockerfile                      Images of the server, the agent and the web interface
 ├── .nvmrc                          Node.js version
 ├── .oxlintrc.json                  Lint rules
 ├── package.json                    Root scripts
@@ -573,7 +574,7 @@ All dependency versions are declared once in the `catalog` of `pnpm-workspace.ya
 ## Known limitations
 
 - Slack messages, emails and widget messages are handled one at a time. A message left unhandled by a restart is handled again at the next start.
-- The agent works at most 15 minutes on one message. Beyond, the message is filed for a person, who gets its reference.
+- The agent works at most 15 minutes on one message, its rewrite included. Beyond, the message is filed for a person, who gets its reference.
 - An answer is kept with its message until the channel takes it. When Slack or the mail server refuses it, it is sent again after 1, 5 and 15 minutes, then every 15 minutes, and again after a restart. It is given up a day after its message was handled, counted from the database so a restart does not start again, or at once when the refusal is final: a Slack channel deleted or archived, the bot removed from it, an address or a message the mail server refuses for good. The log says so, and the request stays in the web interface. A Slack call waits at most 30 seconds.
 - When Slack or the mail server is unreachable at startup, the server tries again after 10 seconds, then waits longer each time, up to every 5 minutes.
 - Duplicates are found among requests sharing words or spelling with the message: a rewording with no word in common, such as "CB" for "carte bancaire", is missed.
@@ -582,8 +583,8 @@ All dependency versions are declared once in the `catalog` of `pnpm-workspace.ya
 - The widget must be reachable from the browsers of the applications. It listens on this machine only by default: a reverse proxy serves `WIDGET_PORT` over HTTPS.
 - A support question answered from a help article gets no request: if the model wrongly judges that an article answers it, the team does not see it. The articles themselves are written and kept up to date by the team.
 - Answers are written by a small local model. The check blocks codes, promises, unknown requests and false claims of forwarding, but a clumsy sentence can still pass. The system records no assignee and no planned date: questions about them are passed to the team.
-- The Mastra server API and Studio have no authentication: only `pnpm dev` serves them, to this machine only. They give no access to the request tools. The web interface of the team has its own accounts.
+- The agent is reached with one password, `AGENT_PASSWORD`, shared by the server and the agent only, on the internal network. The web interface of the team has its own accounts.
 - Sign-in to the web interface allows 5 attempts per email and 30 per network address within 15 minutes, then refuses them for 15 minutes. Two password checks run at a time and 50 more can wait; beyond, the interface asks to retry in a few seconds. These counts are kept in memory: a restart clears them.
-- Mastra keeps its own data (agent memory, traces) in memory and loses it on restart.
+- eve is a young project: version 1.0 came out on 15 November 2026. Its sessions are kept on the disk of the agent while a message is handled: after an upgrade of eve, a message in progress is handled again from the start ([decision 012](docs/decisions/012-eve-agent.md)).
 - The local model takes about 6 GB of memory: on a machine with 16 GB, other heavy programs such as web browsers can make Linux stop it for lack of memory.
 - The local model is slow on a CPU: classifying a message takes from 20 s to 60 s, and the agent adds its own calls. Its classification is measured on 80 fictitious messages only, described in [`docs/agent.md`](docs/agent.md).

@@ -19,6 +19,7 @@ import {
   reviewPageSize,
   reviewRequest,
 } from "./review.ts";
+import { changeRequestStatus } from "./console.ts";
 import { prepareTurn } from "./turn.ts";
 
 const getDatabase = useTestDatabase();
@@ -207,6 +208,60 @@ describe("markDuplicate", () => {
     ).toEqual({ ok: false, error: "ORIGINAL_IS_DUPLICATE" });
     const [first] = await getDatabase().select().from(requests).orderBy(requests.number);
     expect(first).toMatchObject({ status: "NEW", duplicateOfRequestId: null });
+  });
+
+  it("points the duplicates of a request to its original when it becomes a duplicate", async () => {
+    const original = await reviewedLater();
+    const middle = await reviewedLater();
+    const repeated = await reviewedLater();
+    await markDuplicate(getAppDatabase(), reviewer, { reference: repeated, duplicateOf: middle });
+
+    await markDuplicate(getAppDatabase(), reviewer, { reference: middle, duplicateOf: original });
+
+    const [first, second, third] = await getDatabase()
+      .select()
+      .from(requests)
+      .orderBy(requests.number);
+    expect(second?.duplicateOfRequestId).toBe(first?.id);
+    expect(third?.duplicateOfRequestId).toBe(first?.id);
+    const marked = await getDatabase()
+      .select({ requestId: events.requestId, data: events.data })
+      .from(events)
+      .where(eq(events.type, "MARKED_DUPLICATE"));
+    expect(marked).toContainEqual({ requestId: third?.id, data: { duplicateOf: original } });
+  });
+
+  it("frees a duplicate that a person reopens, and still refuses a duplicate as an original", async () => {
+    const original = await reviewedLater();
+    const repeated = await reviewedLater();
+    const other = await reviewedLater();
+    await markDuplicate(getAppDatabase(), reviewer, { reference: repeated, duplicateOf: original });
+
+    await changeRequestStatus(getAppDatabase(), reviewer, { reference: repeated, status: "NEW" });
+
+    const [, second] = await getDatabase().select().from(requests).orderBy(requests.number);
+    expect(second).toMatchObject({ status: "NEW", duplicateOfRequestId: null });
+    expect(
+      await markDuplicate(getAppDatabase(), reviewer, { reference: other, duplicateOf: repeated }),
+    ).toMatchObject({ ok: true });
+    expect(
+      await markDuplicate(getAppDatabase(), reviewer, { reference: original, duplicateOf: other }),
+    ).toEqual({ ok: false, error: "ORIGINAL_IS_DUPLICATE" });
+  });
+
+  it("refuses to close a request that changed since the person opened it", async () => {
+    const original = await reviewedLater();
+    const repeated = await reviewedLater();
+
+    expect(
+      await markDuplicate(getAppDatabase(), reviewer, {
+        reference: repeated,
+        duplicateOf: original,
+        version: new Date(0).toISOString(),
+      }),
+    ).toEqual({ ok: false, error: "CHANGED" });
+    const [, second] = await getDatabase().select().from(requests).orderBy(requests.number);
+    expect(second?.status).toBe("NEW");
   });
 
   it("marks two requests against each other at the same time without blocking", async () => {

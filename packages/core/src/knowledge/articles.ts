@@ -80,23 +80,29 @@ export async function searchKnowledge(
     throw new Error("The embedding model returned no vector");
   }
   const distance = cosineDistance(knowledgeArticles.embedding, vector);
-  const rows = await db
-    .select({
-      project: projects.key,
-      title: knowledgeArticles.title,
-      body: knowledgeArticles.body,
-      distance: sql<number>`${distance}`.mapWith(Number),
-    })
-    .from(knowledgeArticles)
-    .innerJoin(projects, eq(projects.id, knowledgeArticles.projectId))
-    .where(
-      and(
-        inArray(knowledgeArticles.projectId, actor.projectIds),
-        eq(knowledgeArticles.embeddingModel, embedder.model),
-      ),
-    )
-    .orderBy(asc(distance))
-    .limit(knowledgeResultCount);
+  // The HNSW index returns a fixed number of nearest articles before the filter on the projects:
+  // with the articles of many other projects, those of the sender could all be left out. The
+  // iterative scan of pgvector 0.8 goes on until enough articles pass the filter, in exact order.
+  const rows = await db.transaction(async (tx) => {
+    await tx.execute(sql`set local hnsw.iterative_scan = strict_order`);
+    return tx
+      .select({
+        project: projects.key,
+        title: knowledgeArticles.title,
+        body: knowledgeArticles.body,
+        distance: sql<number>`${distance}`.mapWith(Number),
+      })
+      .from(knowledgeArticles)
+      .innerJoin(projects, eq(projects.id, knowledgeArticles.projectId))
+      .where(
+        and(
+          inArray(knowledgeArticles.projectId, actor.projectIds),
+          eq(knowledgeArticles.embeddingModel, embedder.model),
+        ),
+      )
+      .orderBy(asc(distance))
+      .limit(knowledgeResultCount);
+  });
   return rows.map((row) => ({
     project: row.project,
     title: row.title,

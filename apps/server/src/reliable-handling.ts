@@ -30,8 +30,9 @@ export async function handleReliably(
 ): Promise<HandlingOutcome> {
   try {
     const handled = await handle(input);
-    await markHandled(db, input.messageId, handled.reply);
-    return { kind: "handled", reply: handled.reply };
+    // A message closed meanwhile, such as by an erasure, gets no answer.
+    const marked = await markHandled(db, input.messageId, handled.reply);
+    return { kind: "handled", reply: marked ? handled.reply : null };
   } catch (error) {
     const attempts = await recordFailedAttempt(db, input.messageId);
     if (attempts < maxHandlingAttempts) {
@@ -41,8 +42,8 @@ export async function handleReliably(
     const turn = await unclassifiedTurn(db, await prepareTurn(db, input));
     const filed = await fileUnhandledMessage(db, turn);
     const reply = filed === undefined ? null : filedForReviewReply(filed.reference);
-    await markHandled(db, input.messageId, reply);
-    return { kind: "handled", reply };
+    const marked = await markHandled(db, input.messageId, reply);
+    return { kind: "handled", reply: marked ? reply : null };
   }
 }
 

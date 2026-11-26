@@ -41,7 +41,12 @@ const classifierEnvSchema = z.object({
   OLLAMA_BASE_URL: ollamaBaseUrl,
   OLLAMA_API_KEY: ollamaApiKey,
   OLLAMA_MODEL: z.string().min(1),
-  CLASSIFICATION_REVIEW_THRESHOLD: z.coerce.number().min(0).max(1).default(defaultReviewThreshold),
+  // An empty value in .env means not set: read as a number, it would be 0 and send nothing to
+  // review.
+  CLASSIFICATION_REVIEW_THRESHOLD: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().min(0).max(1).default(defaultReviewThreshold),
+  ),
 });
 
 // Model that turns help articles and questions into vectors, chosen in decision 010.

@@ -134,7 +134,10 @@ const widgetEnvSchema = z.object({
   // so the limits of the widget count people and not the proxy.
   WIDGET_TRUST_PROXY: z.stringbool().default(false),
   // Most space the attached files may take, in megabytes: beyond, new files are refused.
-  WIDGET_ATTACHMENTS_QUOTA_MB: z.coerce.number().int().min(1).default(2048),
+  WIDGET_ATTACHMENTS_QUOTA_MB: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().int().min(1).default(2048),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

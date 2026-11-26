@@ -163,6 +163,59 @@ describe("erasePerson", () => {
     expect(row?.text).toBe(erasedText);
   });
 
+  it("closes a message being handled, so the agent cannot file its text after the erasure", async () => {
+    const messageId = await storeMessage(getDatabase(), {
+      sender: bruno,
+      bodyText: "Mon numéro est le 06 12 34 56 78.",
+    });
+    // The agent read the message before the erasure, and files it after.
+    const turn = classified(
+      await prepareTurn(getAppDatabase(), { messageId, trust: "VERIFIED", channelAddress: null }),
+      { title: "Numéro de Bruno" },
+    );
+
+    await erasePerson(getDatabase(), personInput.parse({ email: bruno }), true);
+
+    await expect(createRequest(getAppDatabase(), turn, { projectKey: "PORTAL" })).rejects.toThrow(
+      /closed while the agent handled it/,
+    );
+    expect(await getDatabase().select().from(requests)).toEqual([]);
+    const [row] = await getDatabase()
+      .select({ handledAt: messages.handledAt })
+      .from(messages)
+      .where(eq(messages.id, messageId));
+    expect(row?.handledAt).not.toBeNull();
+  });
+
+  it("empties the original payloads of the conversations of the person, and keeps the others' text", async () => {
+    const own = await storeMessage(getDatabase(), {
+      sender: bruno,
+      bodyText: "Bonjour",
+      thread: "t-shared",
+    });
+    const colleague = await storeMessage(getDatabase(), {
+      sender: "claire@globex.example",
+      bodyText: "Je confirme ce que dit Bruno.",
+      thread: "t-shared",
+    });
+    await getDatabase()
+      .update(messages)
+      .set({ raw: { source: "Bruno a écrit : 06 12 34 56 78" }, handledAt: new Date() })
+      .where(eq(messages.id, colleague));
+
+    await erasePerson(getDatabase(), personInput.parse({ email: bruno }), true);
+
+    const rows = await getDatabase()
+      .select({ id: messages.id, raw: messages.raw, text: messages.bodyText })
+      .from(messages);
+    expect(rows.find((row) => row.id === colleague)).toEqual({
+      id: colleague,
+      raw: {},
+      text: "Je confirme ce que dit Bruno.",
+    });
+    expect(rows.find((row) => row.id === own)?.text).toBe(erasedText);
+  });
+
   it("refuses to erase the contact of an account of the team", async () => {
     await saveStaffAccount(getAppDatabase(), {
       email: "dana.support@team.example",
@@ -226,5 +279,31 @@ describe("purgeOldData", () => {
       .from(messages);
     expect(rows.find((row) => row.id === oldMessage)).toMatchObject({ raw: {}, text: "Ancien" });
     expect(rows.find((row) => row.id === recentMessage)?.raw).toEqual({ source: "…" });
+  });
+
+  it("empties the payload of old answers, which name their recipient", async () => {
+    const now = new Date("2026-11-19T12:00:00Z");
+    await storeMessage(getDatabase(), { sender: bruno, bodyText: "Question", thread: "t-old" });
+    await storeOutboundMessage(getAppDatabase(), {
+      channel: "EMAIL",
+      conversationExternalId: "t-old",
+      externalId: "<old-answer@requests.example>",
+      sender: "agent@requests.example",
+      bodyText: "Réponse",
+      raw: { to: bruno },
+      sentAt: new Date("2025-01-01T00:00:00Z"),
+    });
+    await getDatabase()
+      .update(messages)
+      .set({ receivedAt: new Date("2025-01-01T00:00:00Z") })
+      .where(eq(messages.direction, "OUTBOUND"));
+
+    await purgeOldData(getDatabase(), { sourceRetentionDays: 365, now });
+
+    const [answer] = await getDatabase()
+      .select({ raw: messages.raw, text: messages.bodyText })
+      .from(messages)
+      .where(eq(messages.direction, "OUTBOUND"));
+    expect(answer).toEqual({ raw: {}, text: "Réponse" });
   });
 });

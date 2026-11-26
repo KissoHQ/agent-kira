@@ -19,16 +19,19 @@ export interface UnhandledMessage {
 }
 
 // The system is done with an inbound message, whatever the outcome, so it is not handled again.
-// Its answer, if any, is kept with it until the channel has sent it.
+// Its answer, if any, is kept with it until the channel has sent it. False when the message was
+// already closed meanwhile, such as by an erasure: its answer must then not be sent.
 export async function markHandled(
   db: Database,
   messageId: string,
   reply: string | null = null,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const marked = await db
     .update(messages)
     .set({ handledAt: new Date(), pendingReply: reply })
-    .where(and(eq(messages.id, messageId), isNull(messages.handledAt)));
+    .where(and(eq(messages.id, messageId), isNull(messages.handledAt)))
+    .returning({ id: messages.id });
+  return marked.length > 0;
 }
 
 // The channel sent the answer to the message, or decided not to send it: it is no longer pending.

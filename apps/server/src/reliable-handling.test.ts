@@ -7,7 +7,7 @@ import {
 import { useServerTestDatabase, useTestDatabase } from "@request-agent/core/testing";
 import { describe, expect, it } from "vitest";
 
-import { createReplyDelivery, createSerialQueue } from "./reliable-handling";
+import { createReplyDelivery, createSerialQueue, handleReliably } from "./reliable-handling";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useServerTestDatabase();
@@ -30,6 +30,33 @@ function recordingLogger() {
   const errors: string[] = [];
   return { errors, logger: { error: (message: string) => errors.push(message) } };
 }
+
+describe("handleReliably", () => {
+  it("sends no answer for a message closed while the agent handled it, such as by an erasure", async () => {
+    const stored = await storeInboundMessage(getAppDatabase(), {
+      channel: "SLACK",
+      conversationExternalId: "C1:2",
+      externalId: "C1:2",
+      sender: "U1",
+      bodyText: "Bonjour",
+      raw: {},
+      sentAt: new Date(),
+    });
+
+    const outcome = await handleReliably(
+      getAppDatabase(),
+      async () => {
+        // Closed meanwhile, as an erasure does.
+        await markHandled(getDatabase(), stored.messageId);
+        return { reply: "Votre demande est REQ-0001.", filedBySystem: false };
+      },
+      { messageId: stored.messageId, trust: "VERIFIED", channelAddress: null },
+    );
+
+    expect(outcome).toEqual({ kind: "handled", reply: null });
+    expect(await listPendingReplies(getAppDatabase(), "SLACK")).toEqual([]);
+  });
+});
 
 describe("createSerialQueue", () => {
   it("runs the next tasks after one that fails, and reports the failure", async () => {

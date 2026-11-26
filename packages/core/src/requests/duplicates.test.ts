@@ -68,6 +68,22 @@ describe("findDuplicateCandidates", () => {
     expect(candidates).toEqual([]);
   });
 
+  it("leaves out an open request that is itself a duplicate, so no chain can form", async () => {
+    const original = await file(alice, "Panier vidé", "Le panier se vide.");
+    const repeated = await file(alice, "Panier vidé encore", "Le panier se vide encore.");
+    const [first] = await getDatabase().select().from(requests).where(eq(requests.number, 1));
+    await getDatabase()
+      .update(requests)
+      .set({ duplicateOfRequestId: first?.id ?? null })
+      .where(eq(requests.number, 2));
+
+    const turn = await turnFor(alice, "Sur le SHOP, le panier se vide.", { title: "Panier vidé" });
+    const candidates = await findDuplicateCandidates(getAppDatabase(), turn);
+
+    expect(candidates.map((c) => c.reference)).toContain(original);
+    expect(candidates.map((c) => c.reference)).not.toContain(repeated);
+  });
+
   it("proposes nothing without an identified project, or to a sender who cannot reach the requests", async () => {
     await file(alice, "Panier vidé", "Le panier se vide.");
 

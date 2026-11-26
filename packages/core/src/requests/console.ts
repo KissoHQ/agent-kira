@@ -15,6 +15,7 @@ import {
   requestType,
   requests,
 } from "../db/schema.ts";
+import { openStatuses } from "./duplicates.ts";
 import { formatReference, parseReference } from "./reference.ts";
 import { reviewReasonsOf, type Reviewer } from "./review.ts";
 import { fail, type Result, succeed } from "./views.ts";
@@ -394,7 +395,12 @@ export function changeRequestStatus(
       requestNumber === undefined
         ? []
         : await tx
-            .select({ id: requests.id, status: requests.status, updatedAt: requests.updatedAt })
+            .select({
+              id: requests.id,
+              status: requests.status,
+              updatedAt: requests.updatedAt,
+              duplicateOf: requests.duplicateOfRequestId,
+            })
             .from(requests)
             .where(eq(requests.number, requestNumber))
             .for("update");
@@ -405,7 +411,20 @@ export function changeRequestStatus(
       return fail("CHANGED");
     }
     if (request.status !== input.status) {
-      await tx.update(requests).set({ status: input.status }).where(eq(requests.id, request.id));
+      // A closed duplicate that a person opens again is no longer a duplicate: it stops pointing to
+      // its original, and other requests may then be marked as its duplicates.
+      const reopened =
+        request.status === "CLOSED" &&
+        request.duplicateOf !== null &&
+        (openStatuses as readonly string[]).includes(input.status);
+      await tx
+        .update(requests)
+        .set(
+          reopened
+            ? { status: input.status, duplicateOfRequestId: null }
+            : { status: input.status },
+        )
+        .where(eq(requests.id, request.id));
       await tx.insert(events).values({
         requestId: request.id,
         type: "STATUS_CHANGED",

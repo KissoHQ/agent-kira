@@ -42,7 +42,12 @@ export const reviewRequestInput = z.object({
   version: z.iso.datetime().optional(),
 });
 
-export const markDuplicateInput = z.object({ reference, duplicateOf: reference });
+export const markDuplicateInput = z.object({
+  reference,
+  duplicateOf: reference,
+  // As for a review: a request that changed since the page was opened is not closed.
+  version: z.iso.datetime().optional(),
+});
 
 export type ReviewRequestInput = z.infer<typeof reviewRequestInput>;
 export type MarkDuplicateInput = z.infer<typeof markDuplicateInput>;
@@ -242,11 +247,15 @@ async function lockPair(
 }
 
 // A person found that the request repeats another one: it is closed and points to the original.
+// Every duplicate points straight to an original that is not itself a duplicate: the requests that
+// pointed to this one now point to its original, so no chain and no loop can form.
 export function markDuplicate(
   db: Database,
   reviewer: Reviewer,
   input: MarkDuplicateInput,
-): Promise<Result<RequestView, "NOT_FOUND" | "SAME_REQUEST" | "ORIGINAL_IS_DUPLICATE">> {
+): Promise<
+  Result<RequestView, "NOT_FOUND" | "SAME_REQUEST" | "ORIGINAL_IS_DUPLICATE" | "CHANGED">
+> {
   return db.transaction(async (tx) => {
     const [request, original] = await lockPair(tx, input.reference, input.duplicateOf);
     if (request === undefined || original === undefined) {
@@ -255,27 +264,43 @@ export function markDuplicate(
     if (request.id === original.id) {
       return fail("SAME_REQUEST");
     }
-    // A closed duplicate already points to its own original: pointing to it would build chains,
-    // and a loop when two requests are marked against each other.
-    if (original.status === "CLOSED" && original.duplicateOfRequestId !== null) {
+    if (input.version !== undefined && request.updatedAt.getTime() !== Date.parse(input.version)) {
+      return fail("CHANGED");
+    }
+    if (original.duplicateOfRequestId !== null) {
       return fail("ORIGINAL_IS_DUPLICATE");
     }
     await tx
       .update(requests)
       .set({ duplicateOfRequestId: original.id, status: "CLOSED", needsReview: false })
       .where(eq(requests.id, request.id));
-    const actor = {
-      requestId: request.id,
-      actorType: "HUMAN" as const,
-      actorContactId: reviewer.contactId,
-    };
+    const repointed = await tx
+      .update(requests)
+      .set({ duplicateOfRequestId: original.id })
+      .where(eq(requests.duplicateOfRequestId, request.id))
+      .returning({ id: requests.id });
+    const originalReference = (await view(tx, original.id)).reference;
+    const byReviewer = { actorType: "HUMAN" as const, actorContactId: reviewer.contactId };
     await tx.insert(events).values([
       {
-        ...actor,
+        ...byReviewer,
+        requestId: request.id,
         type: "MARKED_DUPLICATE",
-        data: { duplicateOf: (await view(tx, original.id)).reference },
+        data: { duplicateOf: originalReference },
       },
-      { ...actor, type: "STATUS_CHANGED", data: { from: request.status, to: "CLOSED" } },
+      {
+        ...byReviewer,
+        requestId: request.id,
+        type: "STATUS_CHANGED",
+        data: { from: request.status, to: "CLOSED" },
+      },
+      ...repointed.map((row) => ({
+        actorType: byReviewer.actorType,
+        actorContactId: byReviewer.actorContactId,
+        requestId: row.id,
+        type: "MARKED_DUPLICATE" as const,
+        data: { duplicateOf: originalReference },
+      })),
     ]);
     return succeed(await view(tx, request.id));
   });

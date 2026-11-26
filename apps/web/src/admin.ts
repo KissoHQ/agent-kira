@@ -6,11 +6,14 @@ import {
   contactAdminInput,
   createStaffAccount,
   type Database,
+  deleteStoredFiles,
+  forgetStoredFile,
   listChannelLinks,
   listContactRows,
   listOrganizations,
   listProjectRows,
   listStaff,
+  listStoredFiles,
   organizationInput,
   passwordInput,
   projectInput,
@@ -37,6 +40,7 @@ import {
   contactPage,
   contactsPage,
   type Feedback,
+  filesPage,
   forbiddenPage,
   organizationPage,
   organizationsPage,
@@ -68,6 +72,10 @@ export interface AdminDependencies {
   passwordChecks: CheckQueue;
   // The attempts of each account, shared with sign-in: a wrong password here counts as there.
   emailLimiter: AttemptLimiter;
+  // Folder of the files attached through the widget, to delete them. Without it, none is kept.
+  attachmentsDir?: string;
+  // Days the daily purge keeps them, as the page of the files tells.
+  attachmentRetentionDays: number;
 }
 
 const notices = {
@@ -76,6 +84,7 @@ const notices = {
   disabled: "État du compte mis à jour.",
   added: "Ajout enregistré.",
   removed: "Canal retiré.",
+  deleted: "Fichier supprimé.",
   password: "Mot de passe changé.",
 } as const;
 type Notice = keyof typeof notices;
@@ -401,6 +410,57 @@ export function registerAdministration(app: Hono<AdminEnv>, deps: AdminDependenc
     return removed.ok
       ? done(c, "/admin/channels", "removed", `removed the channel link ${target.data}`)
       : showChannels(c, failure(removed.error), 404);
+  });
+
+  // Files attached through the widget: an administrator frees their space before the purge does.
+  const page = z.coerce.number().int().min(1).max(100_000).catch(1);
+  app.get("/admin/files", async (c) =>
+    deps.render(
+      c,
+      filesPage(
+        deps.view(c),
+        deps.attachmentRetentionDays,
+        await listStoredFiles(db, page.parse(c.req.query("page"))),
+        feedbackOf(c),
+      ),
+      200,
+    ),
+  );
+  app.post("/admin/files/:id/delete", async (c) => {
+    const target = id.safeParse(c.req.param("id"));
+    if (!target.success) {
+      return deps.render(
+        c,
+        filesPage(
+          deps.view(c),
+          deps.attachmentRetentionDays,
+          await listStoredFiles(db, 1),
+          failure("INVALID"),
+        ),
+        400,
+      );
+    }
+    const forgotten = await forgetStoredFile(db, target.data);
+    if (!forgotten.ok) {
+      return deps.render(
+        c,
+        filesPage(
+          deps.view(c),
+          deps.attachmentRetentionDays,
+          await listStoredFiles(db, 1),
+          failure(forgotten.error),
+        ),
+        404,
+      );
+    }
+    if (deps.attachmentsDir !== undefined) {
+      const { failed } = await deleteStoredFiles(deps.attachmentsDir, [forgotten.value]);
+      // The file is no longer served; the daily purge deletes it once the folder allows it.
+      for (const reason of failed) {
+        deps.audit(`A deleted file stays in the folder until the next purge: ${reason}`);
+      }
+    }
+    return done(c, "/admin/files", "deleted", `deleted the file ${target.data}`);
   });
 
   // Accounts of the team. Each change asks the own password of the administrator again.

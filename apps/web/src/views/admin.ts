@@ -2,10 +2,12 @@ import {
   channel,
   type ChannelLinkRow,
   type ContactRow,
+  filesPageSize,
   minPasswordLength,
   type OrganizationRow,
   type ProjectRow,
   type StaffRow,
+  type StoredFiles,
 } from "@request-agent/core";
 import { html } from "hono/html";
 
@@ -13,9 +15,11 @@ import { channelLabels } from "./labels.ts";
 import { type Fragment, options, page, type ViewContext } from "./layout.ts";
 
 // Pages of the administration, open to administrators only: the clients, their projects, the
-// people who write to the agent, the channels that lead to a project, and the accounts of the team.
+// people who write to the agent, the channels that lead to a project, the accounts of the team, and
+// the files attached through the widget.
 
-export type AdminSection = "organizations" | "projects" | "contacts" | "channels" | "staff";
+export type AdminSection =
+  "organizations" | "projects" | "contacts" | "channels" | "staff" | "files";
 
 const sections: [AdminSection, string][] = [
   ["organizations", "Clients"],
@@ -23,6 +27,7 @@ const sections: [AdminSection, string][] = [
   ["contacts", "Contacts"],
   ["channels", "Canaux"],
   ["staff", "Équipe"],
+  ["files", "Fichiers"],
 ];
 
 export interface Feedback {
@@ -637,6 +642,78 @@ export function accountPage(view: ViewContext, feedback: Feedback = {}): Fragmen
       </section>`,
     view.staff,
     "account",
+  );
+}
+
+// A size in megabytes, as people read it.
+const megabytes = (bytes: number) =>
+  `${(bytes / (1024 * 1024)).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`;
+
+export function filesPage(
+  view: ViewContext,
+  retentionDays: number,
+  files: StoredFiles,
+  feedback: Feedback = {},
+): Fragment {
+  const pages = Math.max(1, Math.ceil(files.total / filesPageSize));
+  return adminPage(
+    view,
+    "files",
+    "Fichiers",
+    feedback,
+    html`<p>
+        ${files.total} fichiers joints gardés sur le serveur, ${megabytes(files.totalBytes)} en
+        tout.
+      </p>
+      <p class="muted">
+        Les fichiers joints par le widget sont supprimés automatiquement ${retentionDays} jours
+        après leur réception. Supprimer un fichier ici libère sa place tout de suite. Son nom, son
+        type et sa taille restent avec son message.
+      </p>
+      ${
+        files.rows.length === 0
+          ? html`<p class="muted">Aucun fichier gardé.</p>`
+          : html`<div class="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fichier</th>
+                    <th>Demande</th>
+                    <th>Taille</th>
+                    <th>Reçu le</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${files.rows.map(
+                    (row) =>
+                      html`<tr>
+                        <td><a href="/attachments/${row.id}">${row.filename}</a></td>
+                        <td>
+                          ${
+                            row.reference === null
+                              ? "—"
+                              : html`<a href="/requests/${row.reference}">${row.reference}</a>`
+                          }
+                        </td>
+                        <td>${megabytes(row.sizeBytes)}</td>
+                        <td>${view.formatDate(row.createdAt.toISOString())}</td>
+                        <td>${actionButton(`/admin/files/${row.id}/delete`, "Supprimer")}</td>
+                      </tr>`,
+                  )}
+                </tbody>
+              </table>
+            </div>`
+      }
+      ${
+        pages > 1
+          ? html`<nav class="pages" aria-label="Pages">
+              ${files.page > 1 ? html`<a href="/admin/files?page=${files.page - 1}">Précédente</a>` : ""}
+              <span class="muted">Page ${files.page} sur ${pages}</span>
+              ${files.page < pages ? html`<a href="/admin/files?page=${files.page + 1}">Suivante</a>` : ""}
+            </nav>`
+          : ""
+      }`,
   );
 }
 

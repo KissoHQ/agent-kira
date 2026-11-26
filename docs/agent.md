@@ -12,29 +12,30 @@ This page describes what happens to a message received by the agent, how it is c
 6. **The code makes sure no message is lost.** A follow-up that the agent did not add to its request is added to the request of its conversation. A question that got no answer which can be sent is passed to the team. A message still filed under no request, and not clearly `OTHER`, is filed for a review, with the reason `UNHANDLED`, unless it only asked a question that got its answer. If handling fails, for example while Ollama is down, the message is handled again after 1 minute, then after 5 minutes. After the third failure, it is filed for a person without classification. See [Reliability](#reliability).
 7. **The code checks the answer before it is sent.** It refuses a request that no tool returned, codes and tool names, promises that nobody keeps, a claim that the question was passed to the team when it was not, "tu", and titles such as Madame or Monsieur. A refused answer is written again once, with the reason. When no answer passes, the code writes it from what the tools did: the reference, the message added to a request, the status or the requests found. See [decision 009](decisions/009-agent-answers.md). No answer is sent for a message that is clearly `OTHER` and asks nothing, such as thanks, which also avoids loops of automatic replies by email.
 
-The agent makes at most 8 steps per message, each one a call to the model; an answer refused by the check is written again in a call that the step limit does not count (see [Limits of a run](#limits-of-a-run)). Thinking mode is turned off, because it more than triples the answer time on a CPU. Answers are written in the language of the message, addressing the sender with "vous" in French. An answer takes 2 to 7 minutes on the development machine.
+The agent makes at most 8 steps per message, each one a call to the model, and 9 calls with the answer written again after a rejection (see [Limits of a run](#limits-of-a-run)). It runs in its own process, built with eve ([decision 012](decisions/012-eve-agent.md)): the server sends it each message and gets back its answer and what each tool did. Thinking mode is turned off, because it more than triples the answer time on a CPU. Answers are written in the language of the message, addressing the sender with "vous" in French. An answer takes 2 to 7 minutes on the development machine.
 
 ## Limits of a run
 
 Three limits stop a run of the agent that would not end:
 
-- **The step limit**: 8 steps per message. Mastra does not count an answer that the check refuses and that the model writes again, and it allows a new rewrite after each step that was accepted: the measure below saw a run of 6 calls, 3 of them rewrites.
-- **The time limit**: `AGENT_TIMEOUT_SECONDS`, 900 s by default, for the whole run. A run cut by it keeps what its tools did; the code writes the answer and files the message for a person.
-- **The context window**: 8192 tokens of text that the model reads and writes in one call. KIRA sends it with every call of the classifier and of the agent, so Ollama keeps the model loaded between them. Without it, Ollama chooses 4096 tokens on a CPU, which the prompts of the agent overflow: the model then stops in the middle of its answer.
+- **The step limit**: 8 calls of the model for the turn that handles the message, and 9 for the message with its rewrite. A hook of the agent counts the calls in the session of the message, which survives a restart, and stops the turn before the call that goes past the limit. The rewrite after a rejected answer is one more turn in the same session, which the limit of the message counts.
+- **The time limit**: `AGENT_TIMEOUT_SECONDS`, 900 s by default, for the whole run, its rewrite included. The agent stops the model when the time runs out. A run cut by it keeps what its tools did; the server writes the answer and files the message for a person.
+- **The context window**: 8192 tokens of text that the model reads and writes in one call. KIRA sends it with every call of the classifier and of the agent, so Ollama keeps the model loaded between them. Without it, Ollama chooses 4096 tokens on a CPU, which the prompts of the agent overflow: the model then stops in the middle of its answer. eve summarizes the conversation when it fills 90% of the window, 7373 tokens.
 
-The server logs a warning, with the limit that cut it, for each run stopped by one of them. Frequent warnings mean that the limits do not fit the machine that runs Ollama.
+An answer that a limit cut is never sent. The server logs a warning, with the limit that cut it, for each run stopped by one of them. Frequent warnings mean that the limits do not fit the machine that runs Ollama.
 
-`pnpm eval:agent` runs the agent with the real model on the 12 fictitious messages of [`apps/server/eval/agent-messages.json`](../apps/server/eval/agent-messages.json), on a temporary database dropped at the end. For each message, it reports the calls to the model, the answers refused, the limit that cut the run, the largest prompt and the slowest calls. Then it computes the limits from these measures:
+`pnpm eval:agent` builds and starts the agent of `apps/agent`, with Ollama, on a temporary database dropped at the end, then has it handle the 12 fictitious messages of [`apps/server/eval/agent-messages.json`](../apps/server/eval/agent-messages.json). Stop `pnpm agent` first: both use the folder where eve keeps its sessions. For each message, it reports the calls to the model, the answers refused, the limit that cut the run, the largest prompt and the slowest calls. Then it computes the limits from these measures:
 
-- the time limits: `CLASSIFICATION_TIMEOUT_SECONDS` from the slowest classification, `EMBEDDING_TIMEOUT_SECONDS` from the slowest search of the help articles, and `AGENT_TIMEOUT_SECONDS` from 9 calls (8 steps and a rewrite) as slow as the slowest one;
+- the time limits: `CLASSIFICATION_TIMEOUT_SECONDS` from the slowest classification, `EMBEDDING_TIMEOUT_SECONDS` from the slowest turn of a message into a vector, and `AGENT_TIMEOUT_SECONDS` from 9 calls (8 steps and a rewrite) as slow as the slowest one;
 - the context window: the largest first prompt, grown 8 times by the largest growth measured between two calls, plus the longest answer.
 
-It takes about 50 minutes on a CPU, so it is not part of `pnpm test`. Measured on the development machine, with `ornith:9b`:
+It takes about 50 minutes on a CPU, so it is not part of `pnpm test`. Measured on the development machine, with `ornith:9b` and the agent built with eve:
 
-- no run was cut, and no message needed more than 4 steps;
-- the slowest classification took 75 s, under the 300 s set;
-- the slowest step took 197 s: 9 such calls take 1773 s, longer than the 900 s set. A run that slow is cut, answered by code and filed for a person;
-- the largest prompt had 4250 tokens, and the longest run allowed needs at least 6877: the 8192 set are enough.
+- all 12 messages were handled, no run was cut, and no message needed more than 4 steps;
+- the model wrote its answer again in 8 messages; in 4 of them, the second answer was rejected too, and the server wrote the answer;
+- the slowest classification took 70 s, under the 300 s set;
+- the slowest call of the agent took 208 s, the first one, which loads the model: 9 such calls take 1877 s, longer than the 900 s set. A run that slow is cut, answered by the server and filed for a person;
+- the largest prompt had 4081 tokens. The longest run allowed needs at least 7612: the 8192 set are enough, but such a run would go past 7373 tokens, where eve summarizes the conversation.
 
 ## Request types
 

@@ -1,0 +1,29 @@
+{
+  "name": "@request-agent/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "eve agent: instructions, tools and the internal route the server calls",
+  "type": "module",
+  "exports": {
+    "./testing": "./test/index.ts",
+    "./testing/global-setup": "./test/global-setup.ts"
+  },
+  "scripts": {
+    "build": "eve build",
+    "start": "node --env-file-if-exists=../../.env node_modules/eve/bin/eve.js start --host 127.0.0.1 --port 4120",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@request-agent/core": "workspace:*",
+    "ai": "catalog:",
+    "eve": "catalog:",
+    "ollama-ai-provider-v2": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

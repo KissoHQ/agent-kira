@@ -1,6 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # The agent with a scripted model, which the tests build and start.
+  - "apps/agent/test/scripted"
 
 # Every dependency version is declared once in the catalog and shared by all packages.
 catalogMode: strict
@@ -18,9 +20,12 @@ catalog:
   "@slack/web-api": 8.2.0
   "@types/node": 26.6.5
   "@types/pg": 8.23.1
+  # The version the tests of eve 1.5.0 run with; eve needs at least 7.0.172.
+  ai: 7.0.177
   drizzle-kit: 0.31.11
   drizzle-orm: 0.45.4
   email-reply-parser: 2.3.9
+  eve: 1.5.0
   hono: 4.13.18
   imapflow: 2.9.1
   mastra: 1.39.0

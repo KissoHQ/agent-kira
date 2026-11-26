@@ -1,6 +1,7 @@
 import {
   type Database,
   fileUnhandledMessage,
+  handledAtOf,
   markHandled,
   markReplySent,
   maxHandlingAttempts,
@@ -82,8 +83,11 @@ export function createSerialQueue(onError: (error: unknown) => void) {
 export type SerialQueue = ReturnType<typeof createSerialQueue>;
 
 // Waits before sending an answer again: the mail server or Slack may be down for a while. After
-// the last delay, the answer is tried again at that pace until it goes out.
+// the last delay, the answer is tried again at that pace.
 export const defaultSendRetryDelaysMs = [60_000, 300_000, 900_000];
+// How long an answer is tried, counted from when its message was handled, as kept in the database:
+// a restart does not start the count again.
+export const maxSendDurationMs = 24 * 60 * 60 * 1000;
 
 export interface Delivery<Sent> {
   // The inbound message the answer is for, which keeps the answer until it is sent.
@@ -93,6 +97,9 @@ export interface Delivery<Sent> {
   // Keeps the answer that went out in the conversation. A failure here is only logged: the answer
   // is out, and sending it again would send it twice.
   record: (sent: Sent) => Promise<void>;
+  // Whether a failure will happen again whatever the wait, such as a Slack channel archived or an
+  // address the mail server refuses: the answer is then given up at once.
+  isPermanent?: (error: unknown) => boolean;
 }
 
 export interface DeliveryLogger {
@@ -100,18 +107,41 @@ export interface DeliveryLogger {
 }
 
 // Sends the answer of a handled message until it goes out. The answer was kept with the message
-// when it was handled, so a channel that is down, or a restart, does not lose it.
+// when it was handled, so a channel that is down, or a restart, does not lose it. An answer that
+// cannot go out, refused for good or failing for a day since its message was handled, is given up
+// and reported: trying forever would fill the logs, and hurt the reputation of the mail server of
+// the agent.
 export function createReplyDelivery(
   db: Database,
   queue: SerialQueue,
   logger: DeliveryLogger,
   retryDelaysMs: number[] = defaultSendRetryDelaysMs,
+  now: () => Date = () => new Date(),
 ) {
+  // Whether the answer has waited too long. When the database cannot tell, it is tried again.
+  async function tooOld(messageId: string): Promise<boolean> {
+    const handledAt = await handledAtOf(db, messageId).catch(() => undefined);
+    return handledAt !== undefined && now().getTime() - handledAt.getTime() >= maxSendDurationMs;
+  }
+
   async function deliver<Sent>(delivery: Delivery<Sent>, attempt = 0): Promise<void> {
     let sent: Sent | undefined;
     try {
       sent = await delivery.send();
     } catch (error) {
+      if ((delivery.isPermanent?.(error) ?? false) || (await tooOld(delivery.messageId))) {
+        logger.error(
+          `The answer to message ${delivery.messageId} was given up after ${attempt + 1} attempts: the request stays in the web interface`,
+          error,
+        );
+        await markReplySent(db, delivery.messageId).catch((markError: unknown) => {
+          logger.error(
+            `The answer to message ${delivery.messageId} could not be given up`,
+            markError,
+          );
+        });
+        return;
+      }
       const delayMs = retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)] ?? 0;
       logger.error(`The answer to message ${delivery.messageId} will be sent again`, error);
       queue.later(delayMs, () => deliver(delivery, attempt + 1));

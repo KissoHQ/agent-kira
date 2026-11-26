@@ -7,7 +7,12 @@ import {
 import { useServerTestDatabase, useTestDatabase } from "@request-agent/core/testing";
 import { describe, expect, it } from "vitest";
 
-import { createReplyDelivery, createSerialQueue, handleReliably } from "./reliable-handling";
+import {
+  createReplyDelivery,
+  createSerialQueue,
+  handleReliably,
+  maxSendDurationMs,
+} from "./reliable-handling";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useServerTestDatabase();
@@ -103,6 +108,91 @@ describe("createReplyDelivery", () => {
     expect(attempts).toBe(3);
     expect(recorded).toEqual(["ts"]);
     expect(errors).toHaveLength(2);
+    expect(await listPendingReplies(getAppDatabase(), "SLACK")).toEqual([]);
+  });
+
+  it("gives up at once an answer refused for good, and keeps the request for the team", async () => {
+    const messageId = await handledWithReply("Votre demande est REQ-0001.");
+    const { logger, errors } = recordingLogger();
+    const queue = createSerialQueue(() => undefined);
+    const deliver = createReplyDelivery(getAppDatabase(), queue, logger, [1]);
+    let attempts = 0;
+
+    queue.push(() =>
+      deliver({
+        messageId,
+        send: () => {
+          attempts += 1;
+          return Promise.reject(new Error("is_archived"));
+        },
+        record: () => Promise.resolve(),
+        isPermanent: (error) => error instanceof Error && error.message === "is_archived",
+      }),
+    );
+    await queue.idle();
+
+    expect(attempts).toBe(1);
+    expect(errors).toEqual([
+      `The answer to message ${messageId} was given up after 1 attempts: the request stays in the web interface`,
+    ]);
+    expect(await listPendingReplies(getAppDatabase(), "SLACK")).toEqual([]);
+  });
+
+  it("gives up an answer that keeps failing a day after its message was handled", async () => {
+    const messageId = await handledWithReply("Votre demande est REQ-0001.");
+    const { logger, errors } = recordingLogger();
+    const queue = createSerialQueue(() => undefined);
+    let clock = Date.now();
+    const deliver = createReplyDelivery(
+      getAppDatabase(),
+      queue,
+      logger,
+      [0],
+      () => new Date(clock),
+    );
+    let attempts = 0;
+
+    queue.push(() =>
+      deliver({
+        messageId,
+        send: () => {
+          attempts += 1;
+          if (attempts === 3) {
+            clock += maxSendDurationMs;
+          }
+          return Promise.reject(new Error("Slack is down"));
+        },
+        record: () => Promise.resolve(),
+      }),
+    );
+    await queue.idle();
+
+    expect(attempts).toBe(3);
+    expect(errors.at(-1)).toContain("was given up after 3 attempts");
+    expect(await listPendingReplies(getAppDatabase(), "SLACK")).toEqual([]);
+  });
+
+  it("counts the day from the database, so a restart does not try an old answer again for a day", async () => {
+    const messageId = await handledWithReply("Votre demande est REQ-0001.");
+    const { logger, errors } = recordingLogger();
+    // The server starts again a day after the message was handled: its first attempt fails.
+    const restarted = createReplyDelivery(
+      getAppDatabase(),
+      createSerialQueue(() => undefined),
+      logger,
+      [0],
+      () => new Date(Date.now() + maxSendDurationMs),
+    );
+
+    await restarted({
+      messageId,
+      send: () => Promise.reject(new Error("Slack is down")),
+      record: () => Promise.resolve(),
+    });
+
+    expect(errors).toEqual([
+      `The answer to message ${messageId} was given up after 1 attempts: the request stays in the web interface`,
+    ]);
     expect(await listPendingReplies(getAppDatabase(), "SLACK")).toEqual([]);
   });
 

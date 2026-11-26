@@ -2,11 +2,14 @@ import {
   attachments,
   connectDatabase,
   conversations,
+  fileUnhandledMessage,
   listPendingReplies,
   markHandled,
   messages,
+  prepareTurn,
   storeInboundMessage,
   type TurnInput,
+  unclassifiedTurn,
 } from "@request-agent/core";
 import { useServerTestDatabase, useTestDatabase } from "@request-agent/core/testing";
 import type Mail from "nodemailer/lib/mailer";
@@ -220,8 +223,32 @@ describe("startEmailAdapter", () => {
     await mail.receive({ messageId: "<unverified@acme.example>" });
 
     expect(mail.handled[0]?.trust).toBe("UNVERIFIED");
-    expect(mail.sent.map((email) => email.text)).toEqual([acknowledgementOf("REQ-0004")]);
+    // The message was filed under no request: the reference the model wrote is not given.
+    expect(mail.sent.map((email) => email.text)).toEqual([acknowledgementOf(undefined)]);
     expect(mail.sent[0]?.text).not.toContain("evil.example");
+    expect(mail.sent[0]?.text).not.toContain("REQ-0004");
+  });
+
+  it("gives a sender who is not verified the reference of the request their message is filed under", async () => {
+    const mail = await fakeMail(
+      async (input) => {
+        const turn = await unclassifiedTurn(
+          getAppDatabase(),
+          await prepareTurn(getAppDatabase(), input),
+        );
+        const filed = await fileUnhandledMessage(getAppDatabase(), turn);
+        return {
+          reply: `Votre demande ${filed?.reference} et aussi REQ-0999.`,
+          filedBySystem: true,
+        };
+      },
+      false,
+      receivingServer,
+    );
+
+    await mail.receive({ messageId: "<filed@acme.example>" });
+
+    expect(mail.sent.map((email) => email.text)).toEqual([acknowledgementOf("REQ-0001")]);
   });
 
   it("answers nothing to an address whose domain failed DMARC at our server", async () => {

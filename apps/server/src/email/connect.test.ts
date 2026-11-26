@@ -7,8 +7,8 @@ import { ImapFlow } from "imapflow";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { type CursorStore, type MailServerSettings, imapMailbox, smtpSender } from "./connect";
-import { parseEmail } from "./parse";
+import { type CursorStore, type MailServerSettings, imapMailbox, smtpSender } from "./connect.ts";
+import { parseEmail } from "./parse.ts";
 
 // Runs against the local mail server started by `pnpm db:up`, on the mailbox kept for the tests.
 const rootEnvFile = fileURLToPath(new URL("../../../../.env", import.meta.url));

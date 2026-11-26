@@ -1,0 +1,10 @@
+{
+  "name": "@request-agent/scripted-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The agent with a scripted model instead of Ollama, built and started by the tests",
+  "type": "module",
+  "dependencies": {
+    "eve": "catalog:"
+  }
+}

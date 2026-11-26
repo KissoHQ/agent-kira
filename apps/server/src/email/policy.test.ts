@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { rawEmail } from "../../test/emails";
-import { parseEmail } from "./parse";
-import { checkSender, isAutomatic } from "./policy";
+import { rawEmail } from "../../test/emails.ts";
+import { parseEmail } from "./parse.ts";
+import { checkSender, isAutomatic } from "./policy.ts";
 
 const trusted = { trustedAuthservId: "mx.requests.example", trustAllSenders: false };
 

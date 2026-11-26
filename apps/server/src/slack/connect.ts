@@ -1,7 +1,7 @@
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 
-import type { SlackEventSource, SlackWebApi } from "./adapter";
+import type { SlackEventSource, SlackWebApi } from "./adapter.ts";
 
 export interface SlackConnection {
   events: SlackEventSource;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { rawEmail } from "../../test/emails";
-import { parseEmail } from "./parse";
+import { rawEmail } from "../../test/emails.ts";
+import { parseEmail } from "./parse.ts";
 
 describe("parseEmail", () => {
   it("reads the sender, the recipients, the subject and the attached files", async () => {

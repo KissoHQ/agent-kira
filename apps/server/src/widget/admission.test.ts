@@ -5,7 +5,7 @@ import {
   createWaitingCounter,
   maxWaitingMessages,
   maxWaitingPerAddress,
-} from "./admission";
+} from "./admission.ts";
 
 describe("createWaitingCounter", () => {
   it("limits the waiting messages of one address, and gives the place back", () => {

@@ -1,6 +1,7 @@
 # Checks every pull request and every push to main: lint, types, format, tests against a real
-# database and mail server, the audit of the dependencies, the build of the agent server, and the
-# build of the two images of the deployment, which are not pushed anywhere.
+# database and mail server, with the agent of the tests built by eve, the audit of the dependencies,
+# the build of the agent, and the build of the three images of the deployment, which are not pushed
+# anywhere.
 # Actions are pinned by the commit of their release, so a moved tag cannot change what runs.
 name: CI
 
@@ -43,8 +44,9 @@ jobs:
         ports:
           - 3025:3025
           - 3143:3143
-    # Passwords of disposable containers, used only by this job.
+    # Passwords of disposable containers, used only by this job. eve sends no usage statistics.
     env:
+      EVE_TELEMETRY_DISABLED: "1"
       TEST_DATABASE_URL: postgresql://request_agent:ci-owner-password@127.0.0.1:5433/request_agent_test
       APP_DATABASE_URL: postgresql://request_agent_app:ci-app-password@127.0.0.1:5433/request_agent
       SERVER_DATABASE_URL: postgresql://request_agent_server:ci-server-password@127.0.0.1:5433/request_agent
@@ -71,9 +73,11 @@ jobs:
         run: pnpm test
       - name: Audit of the dependencies
         run: pnpm audit
-      - name: Build of the agent server
+      - name: Build of the agent
         run: pnpm build
-      - name: Build of the agent server image
+      - name: Build of the server image
         run: docker build --target server --tag kira-server:ci .
+      - name: Build of the agent image
+        run: docker build --target agent --tag kira-agent:ci .
       - name: Build of the web interface image
         run: docker build --target web --tag kira-web:ci .

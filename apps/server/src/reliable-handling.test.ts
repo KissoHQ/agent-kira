@@ -12,7 +12,7 @@ import {
   createSerialQueue,
   handleReliably,
   maxSendDurationMs,
-} from "./reliable-handling";
+} from "./reliable-handling.ts";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useServerTestDatabase();

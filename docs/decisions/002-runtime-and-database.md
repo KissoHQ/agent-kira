@@ -1,6 +1,6 @@
 # 002 — Runtime environment and database
 
-- Status: accepted
+- Status: accepted, revised by [decision 012](012-eve-agent.md)
 - Date: 2026-10-28
 
 ## Context
@@ -47,6 +47,10 @@ Weekly npm downloads in October 2026 were 27.9 million for `drizzle-orm` and 17.
 - The database password is read from `.env`, which is never committed. `.env.example` documents it with a placeholder value.
 - Mastra keeps its own internal data (agent memory, paused workflows, traces) in memory for now. Its official PostgreSQL storage (`@mastra/pg`) will be added only when a feature needs it.
 - Moving to a hosted PostgreSQL later only requires a different connection string.
+
+## Revision: the agent built with eve (November 2026)
+
+The agent now runs in its own process, built with eve ([decision 012](012-eve-agent.md)). Mastra is no longer used. eve keeps the session of each message on disk while it is handled, in `.eve/` next to the agent, and deletes it once the message is handled: PostgreSQL stays the only store of the messages and requests.
 
 ## Sources
 

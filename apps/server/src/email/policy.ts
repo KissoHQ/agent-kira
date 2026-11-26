@@ -1,6 +1,6 @@
 import type { Trust } from "@request-agent/core";
 
-import type { ParsedEmail } from "./parse";
+import type { ParsedEmail } from "./parse.ts";
 
 export interface TrustSettings {
   // authserv-id of the receiving mail server, such as mx.google.com, or undefined when none is

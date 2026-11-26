@@ -24,13 +24,14 @@ The demo data holds three projects and three contacts, described in [the data mo
 
 ## 2. Start the services
 
-Use three terminals, from the root of the project:
+Use four terminals, from the root of the project:
 
 | Terminal | Command                                    | Ready when                                                             |
 | -------- | ------------------------------------------ | ---------------------------------------------------------------------- |
 | 1        | `ollama serve`, unless Ollama already runs | `curl http://127.0.0.1:11434/api/version` answers                      |
-| 2        | `pnpm dev`                                 | The log shows `Email adapter listening`, and `Slack adapter listening` |
-| 3        | `pnpm web`                                 | The log shows `Web interface listening on http://127.0.0.1:4112`       |
+| 2        | `pnpm build`, then `pnpm agent`            | The log shows `Listening on: http://127.0.0.1:4120/`                   |
+| 3        | `pnpm dev`                                 | The log shows `Email adapter listening`, and `Slack adapter listening` |
+| 4        | `pnpm web`                                 | The log shows `Web interface listening on http://127.0.0.1:4112`       |
 
 Open `http://127.0.0.1:4112` in Chrome or Firefox, and sign in as `dana.support@team.example`.
 
@@ -133,7 +134,7 @@ The agent adds 👀 to the message, then answers in its thread with the referenc
 
 ## 5. Widget → Agent → Request
 
-1. Add to `.env` the variables of the widget, described in [`widget.md`](widget.md): `WIDGET_ALLOWED_ORIGINS=http://localhost:4114`, `WIDGET_IDENTITY_SECRETS=PORTAL=` followed by a secret made with `openssl rand -hex 32`, and an absolute `ATTACHMENTS_DIR`. Restart `pnpm dev` and `pnpm web`: the log of the agent server shows `Widget listening`.
+1. Add to `.env` the variables of the widget, described in [`widget.md`](widget.md): `WIDGET_ALLOWED_ORIGINS=http://localhost:4114`, `WIDGET_IDENTITY_SECRETS=PORTAL=` followed by a secret made with `openssl rand -hex 32`, and an absolute `ATTACHMENTS_DIR`. Restart `pnpm dev` and `pnpm web`: the log of `pnpm dev` shows `Widget listening`.
 2. Start the demo page, the orders page of a fictitious customer portal, signed in as Bruno Leroy:
 
    ```bash
@@ -158,13 +159,14 @@ The same scenarios run without Ollama, Slack or the mail servers in `apps/server
 
 ## Troubleshooting
 
-| Symptom                                               | Check                                                                                                                                                   |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm demo:email` prints `No answer after 10 minutes` | `pnpm dev` and Ollama run, and the log of `pnpm dev` shows no error. A computer that went to sleep pauses the agent: the answer comes after it wakes up |
-| The agent does not answer in Slack                    | The bot is invited to the channel, the message mentions it, and the log of `pnpm dev` shows `Slack adapter listening`                                   |
-| A Slack request waits for a review as unverified      | Your member ID is linked to a contact, step 4.3                                                                                                         |
-| The web interface goes back to the sign-in page       | Use Chrome or Firefox: Safari keeps no session cookie over plain HTTP                                                                                   |
-| Every email request waits for a review                | `EMAIL_TRUST_LOCAL_SENDERS=true` is set in `.env`, and `pnpm dev` was restarted after the change                                                        |
+| Symptom                                                                        | Check                                                                                                                                                                 |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm demo:email` prints `No answer after 10 minutes`                          | `pnpm agent`, `pnpm dev` and Ollama run, and the log of `pnpm dev` shows no error. A computer that went to sleep pauses the agent: the answer comes after it wakes up |
+| The log of `pnpm dev` shows `The agent could not handle the message: HTTP 401` | `pnpm agent` and `pnpm dev` read the same `AGENT_PASSWORD` from `.env`: restart both after a change                                                                   |
+| The agent does not answer in Slack                                             | The bot is invited to the channel, the message mentions it, and the log of `pnpm dev` shows `Slack adapter listening`                                                 |
+| A Slack request waits for a review as unverified                               | Your member ID is linked to a contact, step 4.3                                                                                                                       |
+| The web interface goes back to the sign-in page                                | Use Chrome or Firefox: Safari keeps no session cookie over plain HTTP                                                                                                 |
+| Every email request waits for a review                                         | `EMAIL_TRUST_LOCAL_SENDERS=true` is set in `.env`, and `pnpm dev` was restarted after the change                                                                      |
 
 ## Cleaning up
 

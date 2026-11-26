@@ -1,6 +1,6 @@
 # 009 — The agent writes its answers, and code checks them
 
-- Status: accepted
+- Status: accepted, revised by [decision 012](012-eve-agent.md)
 - Date: 2026-10-30
 - Replaces the rule of [decision 003](003-agent-tools-security.md) that the text of the model is never sent
 
@@ -64,6 +64,14 @@ The model takes about 6 GB of memory. During the measures, Linux stopped it six 
 - The model can still write a clumsy or approximate sentence that the check does not catch. The check blocks the mistakes that matter most: a leak of another request, a false promise, a false claim of forwarding.
 - An agent run makes up to 8 calls to the model, against 5 before, so it can act, look up and answer.
 - Answers take longer, since the model writes the answer after acting.
+
+## Revision: the check in the server (November 2026)
+
+The agent now runs with eve ([decision 012](012-eve-agent.md)), whose hooks see an answer only after it is recorded and cannot send it back to the model. The check described above now runs in the server, once the agent returned its answer:
+
+- A rejected answer is sent back to the agent once, in the session of the message, with the reasons, as a new turn. The server counts the rewrites: there is at most one per message. With Mastra, a new rewrite was allowed after each step, and a measure saw 3 in one run.
+- The rewrite counts in the limit of the message: 9 calls of the model at most, the rewrite included.
+- An answer that a limit cut, such as the full context window, is never sent: it may stop in the middle of a sentence. The server writes the answer from what the tools did.
 
 ## Sources
 

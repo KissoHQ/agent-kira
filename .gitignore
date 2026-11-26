@@ -1,9 +1,11 @@
 # Dependencies
 node_modules/
 
-# Build output
+# Build output, and the sessions eve keeps while the agent runs
 dist/
 .mastra/
+.eve/
+.output/
 
 # Test coverage
 coverage/

@@ -21,6 +21,8 @@ export {
 } from "./classification/duplicate-judge.ts";
 export { requestPriorityDefinitions, requestTypeDefinitions } from "./classification/taxonomy.ts";
 export {
+  agentPassword,
+  timeoutSeconds,
   loadAppDatabaseEnv,
   loadServerDatabaseEnv,
   loadClassifierEnv,
@@ -224,3 +226,18 @@ export {
   type StoredFiles,
 } from "./admin/files.ts";
 export { modelContextTokens, ollamaHeaders } from "./classification/ollama.ts";
+export { explainForModel } from "./agent/explain.ts";
+export {
+  agentServerUsername,
+  agentTurnReplySchema,
+  agentTurnRequestSchema,
+  classifiedTurnSchema,
+  maxAgentSteps,
+  maxAnswerRetries,
+  maxModelCallsPerMessage,
+  type AgentLimit,
+  type AgentTurnReply,
+  type AgentTurnRequest,
+  type AgentTurnResult,
+} from "./agent/protocol.ts";
+export { isToolOutcome, type ToolOutcome } from "./agent/tool-outcome.ts";

@@ -1,16 +1,16 @@
-import type { IMastraLogger } from "@mastra/core/logger";
 import { getMailboxCursor, type MailboxCursor, saveMailboxCursor } from "@request-agent/core";
 
-import type { ChannelHandler } from "../channel-handler";
-import { loadEmailEnv } from "../config";
-import { startEmailAdapter } from "./adapter";
-import { imapMailbox, smtpSender } from "./connect";
+import type { ChannelHandler } from "../channel-handler.ts";
+import { errorMessage, type Logger } from "../logger.ts";
+import { loadEmailEnv } from "../config.ts";
+import { startEmailAdapter } from "./adapter.ts";
+import { imapMailbox, smtpSender } from "./connect.ts";
 
 // Connects the agent to its mailbox when one is configured. Returns false otherwise, so the server
 // keeps running without email.
 export async function startEmailIfConfigured(
   handler: () => ChannelHandler,
-  logger: IMastraLogger,
+  logger: Logger,
 ): Promise<boolean> {
   const env = loadEmailEnv();
   if (env === undefined) {
@@ -32,7 +32,7 @@ export async function startEmailIfConfigured(
   };
   const errorLogger = {
     error: (message: string, error: unknown) => {
-      logger.error(message, { error: error instanceof Error ? error.message : String(error) });
+      logger.error(message, { error: errorMessage(error) });
     },
   };
   const { db, handle } = handler();

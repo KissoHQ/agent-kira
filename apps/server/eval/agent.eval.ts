@@ -1,11 +1,14 @@
 // Measures the agent with the real model, on the fictitious messages of agent-messages.json: how
 // many model calls each kind of message takes, how many tokens they send and write, and how long
 // each call to Ollama takes on the machine that runs it. The limits of the agent are set from
-// these measures, as docs/agent.md describes. It runs on a temporary database, dropped at the
-// end, and it is slow on a CPU, so it is not part of the tests. Usage: pnpm eval:agent
+// these measures, as docs/agent.md describes. It builds and starts the agent of apps/agent, with
+// Ollama, on a temporary database dropped at the end. It is slow on a CPU, so it is not part of
+// the tests. Usage: pnpm eval:agent
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { buildAgent, productionAgentRoot, startAgent } from "@request-agent/agent/testing";
 import {
   type Classifier,
   connectDatabase,
@@ -13,16 +16,17 @@ import {
   createOllamaDuplicateJudge,
   createOllamaEmbedder,
   type DuplicateJudge,
-  type Embedder,
   loadAppDatabaseEnv,
   loadClassifierEnv,
   loadKnowledgeEnv,
   loadServerDatabaseEnv,
+  maxAgentSteps,
+  maxAnswerRetries,
   modelContextTokens,
   ollamaHeaders,
   saveArticle,
-  searchKnowledge,
   storeInboundMessage,
+  timeoutSeconds,
 } from "@request-agent/core";
 import {
   asRole,
@@ -34,19 +38,20 @@ import {
   prepareDatabase,
   seedDatabase,
 } from "@request-agent/core/testing";
-import { createOllama } from "ollama-ai-provider-v2";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
-import { type HandlingLimits, loadHandlingLimits } from "../src/config";
-import { maxAnswerRetries } from "../src/mastra/agents/answer-check";
-import { type AgentRun, handleMessage, maxAgentSteps } from "../src/mastra/agents/handle-message";
-import { createRequestAgent } from "../src/mastra/agents/request-agent";
+import { createAgentClient } from "../src/agent/client.ts";
+import { type AgentRun, handleMessage } from "../src/agent/handle-message.ts";
+import { type HandlingLimits, loadHandlingLimits } from "../src/config.ts";
 
 const rootEnvFile = fileURLToPath(new URL("../../../.env", import.meta.url));
 
 // Long enough never to cut a call: the limits set in .env are compared with the measures after.
 const measureTimeoutMs = 60 * 60 * 1000;
+
+// The time limit of the search of the help articles, which the agent reads.
+const embeddingEnvSchema = z.object({ EMBEDDING_TIMEOUT_SECONDS: timeoutSeconds(60) });
 
 const sampleSchema = z.array(
   z.object({
@@ -74,11 +79,11 @@ interface Measure {
   answerTokens: number[];
   // Each call that classifies the message or judges a duplicate.
   classificationSeconds: number[];
-  // Each call that turns a question into a vector.
+  // A call that turns the message into a vector, as the search of the help articles does with a
+  // question.
   embeddingSeconds: number[];
-  // Each step of the agent: one call to the model and the tools it asked for.
+  // Each call of the agent to the model.
   stepSeconds: number[];
-  stepStarts: number[];
   totalSeconds: number;
   error?: string;
 }
@@ -95,7 +100,6 @@ function newMeasure(name: string): Measure {
     classificationSeconds: [],
     embeddingSeconds: [],
     stepSeconds: [],
-    stepStarts: [],
     totalSeconds: 0,
   };
 }
@@ -138,7 +142,7 @@ function measureDatabaseUrl(testDatabaseUrl: string): string {
 }
 
 const largest = (values: number[]) => Math.max(0, ...values);
-// Calls the step limit counts: the answers written again after a rejection are not.
+// Calls of the first turn of the agent: the answers written again after a rejection are apart.
 const countedSteps = (m: Measure) => m.modelCalls - m.rejectedAnswers;
 const format = (seconds: number) => `${seconds.toFixed(1)} s`;
 
@@ -186,7 +190,10 @@ function reportContextWindow(measures: Measure[]): void {
   );
 }
 
-function reportLimits(measures: Measure[], limits: HandlingLimits): void {
+function reportLimits(
+  measures: Measure[],
+  limits: HandlingLimits & { embeddingTimeoutMs: number },
+): void {
   const most = measures.reduce((a, b) => (countedSteps(b) > countedSteps(a) ? b : a));
   const cut = measures.filter((m) => m.cutBy !== undefined);
   print(
@@ -223,9 +230,10 @@ it("measures the agent with the real model", async () => {
   if (existsSync(rootEnvFile)) {
     process.loadEnvFile(rootEnvFile);
   }
-  // No data leaves the machine (decision 001), as in the server.
-  process.env.MASTRA_TELEMETRY_DISABLED ??= "1";
-  const limits = loadHandlingLimits();
+  const limits = {
+    ...loadHandlingLimits(),
+    embeddingTimeoutMs: embeddingEnvSchema.parse(process.env).EMBEDDING_TIMEOUT_SECONDS * 1000,
+  };
   const classifierEnv = loadClassifierEnv();
   const { OLLAMA_EMBEDDING_MODEL } = loadKnowledgeEnv();
   const { OLLAMA_BASE_URL: baseUrl, OLLAMA_API_KEY: apiKey, OLLAMA_MODEL: model } = classifierEnv;
@@ -241,6 +249,14 @@ it("measures the agent with the real model", async () => {
   await prepareDatabase(databaseUrl, loadAppDatabaseEnv().APP_DATABASE_URL, serverDatabaseUrl);
   const owner = connectDatabase(databaseUrl);
   const server = connectDatabase(asRole(databaseUrl, serverDatabaseUrl));
+  // The agent of apps/agent, as the server reaches it in production, on the temporary database.
+  const password = randomBytes(32).toString("hex");
+  await buildAgent(productionAgentRoot);
+  const agentProcess = await startAgent(productionAgentRoot, {
+    SERVER_DATABASE_URL: asRole(databaseUrl, serverDatabaseUrl),
+    AGENT_PASSWORD: password,
+    EMBEDDING_TIMEOUT_SECONDS: String(measureTimeoutMs / 1000),
+  });
   try {
     const ollamaOptions = { baseUrl, model, timeoutMs: measureTimeoutMs, apiKey };
     const embedder = createOllamaEmbedder({ ...ollamaOptions, model: OLLAMA_EMBEDDING_MODEL });
@@ -263,31 +279,7 @@ it("measures the agent with the real model", async () => {
     };
     const timedJudge: DuplicateJudge = (input) =>
       timed(current.classificationSeconds, () => judge(input));
-    const timedEmbedder: Embedder = {
-      model: embedder.model,
-      embed: (texts, kind) => timed(current.embeddingSeconds, () => embedder.embed(texts, kind)),
-    };
-    // The same model as the server, which notes when each of its calls starts and its tokens.
-    const base = createOllama({
-      baseURL: baseUrl,
-      headers: apiKey === undefined ? undefined : { authorization: `Bearer ${apiKey}` },
-    })(model);
-    const timedModel = new Proxy(base, {
-      get(target, property, receiver) {
-        if (property === "doGenerate") {
-          return async (...args: Parameters<typeof base.doGenerate>) => {
-            const measure = current;
-            measure.stepStarts.push(performance.now());
-            const generated = await target.doGenerate(...args);
-            measure.promptTokens.push(generated.usage.inputTokens.total ?? 0);
-            measure.answerTokens.push(generated.usage.outputTokens.total ?? 0);
-            return generated;
-          };
-        }
-        return Reflect.get(target, property, receiver) as unknown;
-      },
-    });
-    const agent = createRequestAgent(timedModel);
+    const agent = createAgentClient({ url: agentProcess.url, password });
 
     const measures: Measure[] = [];
     for (const [index, sample] of samples.entries()) {
@@ -320,20 +312,19 @@ it("measures the agent with the real model", async () => {
             classify: timedClassify,
             judgeDuplicate: timedJudge,
             reviewThreshold: classifierEnv.CLASSIFICATION_REVIEW_THRESHOLD,
-            searchKnowledge: (actor, question) =>
-              searchKnowledge(server.db, timedEmbedder, actor, question),
             agentTimeoutMs: measureTimeoutMs,
             onAgentRun: (run) => {
-              const ended = performance.now();
-              measure.modelCalls = run.modelCalls;
+              measure.modelCalls = run.modelCalls.length;
               measure.rejectedAnswers = run.rejectedAnswers;
               measure.cutBy = run.cutBy;
-              measure.stepSeconds = measure.stepStarts.map(
-                (start, step) => ((measure.stepStarts[step + 1] ?? ended) - start) / 1000,
-              );
+              measure.promptTokens = run.modelCalls.map((call) => call.inputTokens);
+              measure.answerTokens = run.modelCalls.map((call) => call.outputTokens);
+              measure.stepSeconds = run.modelCalls.map((call) => call.durationMs / 1000);
             },
           },
         );
+        // oxlint-disable-next-line no-await-in-loop
+        await timed(measure.embeddingSeconds, () => embedder.embed([sample.text], "query"));
       } catch (error) {
         current.error = error instanceof Error ? error.message : String(error);
       }
@@ -349,6 +340,7 @@ it("measures the agent with the real model", async () => {
       measures.filter((m) => m.error !== undefined).map((m) => `${m.case}: ${m.error}`),
     ).toEqual([]);
   } finally {
+    await agentProcess.stop();
     await server.close();
     await owner.close();
     await dropDatabaseIfExists(databaseUrl);

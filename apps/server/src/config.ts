@@ -1,32 +1,34 @@
 import { isAbsolute } from "node:path";
 
-import { ollamaApiKey, ollamaBaseUrl } from "@request-agent/core";
+import { agentPassword, ollamaApiKey, ollamaBaseUrl, timeoutSeconds } from "@request-agent/core";
 import { z } from "zod";
 
 const envSchema = z.object({
   OLLAMA_BASE_URL: ollamaBaseUrl,
   OLLAMA_MODEL: z.string().min(1),
   OLLAMA_API_KEY: ollamaApiKey,
-  // Level of the logs of the server: info by default, so the start of each channel is shown, even
-  // when Mastra runs in production mode.
+  // Level of the logs of the server: info by default, so the start of each channel is shown.
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  // Address the Mastra server listens on, for /health and /ready. Only this machine, or its own
-  // container, by default: Mastra reads every JSON body whole before any check of KIRA, so it is
-  // never published.
-  MASTRA_HOST: z.preprocess(
+  // Address and port of /health and /ready. Only this machine, or its own container, by default:
+  // they are read by the orchestrator, not published.
+  SERVER_HOST: z.preprocess(
     (value) => (value === "" ? undefined : value),
     z.string().min(1).default("127.0.0.1"),
   ),
+  SERVER_PORT: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().int().min(1).max(65_535).default(4111),
+  ),
 });
 
-// Node.js runs a longer timer after 1 ms instead, which would cut every call at once.
-const maxTimerSeconds = Math.floor(2_147_483_647 / 1000);
-
-const timeoutSeconds = (defaultSeconds: number) =>
-  z.preprocess(
+// The agent runs in its own process: the server calls it there, with its password.
+const agentEnvSchema = z.object({
+  AGENT_URL: z.preprocess(
     (value) => (value === "" ? undefined : value),
-    z.coerce.number().int().min(1).max(maxTimerSeconds).default(defaultSeconds),
-  );
+    z.url({ protocol: /^https?$/ }).default("http://127.0.0.1:4120"),
+  ),
+  AGENT_PASSWORD: agentPassword,
+});
 
 // Longest waits for the model. Their right values depend on the machine that runs Ollama, so they
 // are measured there with `pnpm eval:agent`, as docs/agent.md describes. The defaults were
@@ -34,18 +36,15 @@ const timeoutSeconds = (defaultSeconds: number) =>
 const handlingLimitsEnvSchema = z.object({
   // One call that classifies a message or judges a duplicate.
   CLASSIFICATION_TIMEOUT_SECONDS: timeoutSeconds(300),
-  // The whole run of the agent on one message, all its model calls and tools included. A run cut
-  // by it loses the answer of the model: code answers and files the message for a person. So it
-  // must let the longest run allowed by the step limit end.
-  AGENT_TIMEOUT_SECONDS: timeoutSeconds(900),
-  // One call that turns a question into a vector, to search the help articles.
-  EMBEDDING_TIMEOUT_SECONDS: timeoutSeconds(60),
+  // The whole run of the agent on one message, all its model calls, tools and rewrite included. A
+  // run cut by it loses the answer of the model: code answers and files the message for a person.
+  // So it must let the longest run allowed by the step limit end.
+  AGENT_TIMEOUT_SECONDS: timeoutSeconds(2000),
 });
 
 export interface HandlingLimits {
   classificationTimeoutMs: number;
   agentTimeoutMs: number;
-  embeddingTimeoutMs: number;
 }
 
 // An empty value in .env means the variable is not set.
@@ -149,8 +148,8 @@ const widgetEnvSchema = z.object({
     z.string().transform(parseIdentitySecrets),
   ),
   ATTACHMENTS_DIR: z.string().refine(isAbsolute, { message: "Must be an absolute path" }),
-  // The widget listens apart from the Mastra server, so it sees the address of each person and
-  // reads no request body before its own limits. Only this machine by default: a reverse proxy
+  // The widget listens on its own port, so it sees the address of each person and reads no request
+  // body before its own limits. Only this machine by default: a reverse proxy
   // serves it over HTTPS, and a container sets the address to 0.0.0.0.
   WIDGET_HOST: z.preprocess(
     (value) => (value === "" ? undefined : value),
@@ -171,6 +170,7 @@ const widgetEnvSchema = z.object({
 });
 
 export type Env = z.infer<typeof envSchema>;
+export type AgentEnv = z.infer<typeof agentEnvSchema>;
 export type WidgetEnv = z.infer<typeof widgetEnvSchema>;
 export type EmailEnv = z.infer<typeof emailEnvSchema>;
 export interface SlackTokens {
@@ -195,8 +195,11 @@ export function loadHandlingLimits(source: NodeJS.ProcessEnv = process.env): Han
   return {
     classificationTimeoutMs: env.CLASSIFICATION_TIMEOUT_SECONDS * 1000,
     agentTimeoutMs: env.AGENT_TIMEOUT_SECONDS * 1000,
-    embeddingTimeoutMs: env.EMBEDDING_TIMEOUT_SECONDS * 1000,
   };
+}
+
+export function loadAgentEnv(source: NodeJS.ProcessEnv = process.env): AgentEnv {
+  return parse(agentEnvSchema, source);
 }
 
 // The Slack tokens, or undefined when Slack is not configured.

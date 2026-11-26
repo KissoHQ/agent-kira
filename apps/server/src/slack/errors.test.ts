@@ -1,7 +1,7 @@
 import { ErrorCode } from "@slack/web-api";
 import { describe, expect, it } from "vitest";
 
-import { isPermanentSlackError } from "./errors";
+import { isPermanentSlackError } from "./errors.ts";
 
 // An error as @slack/web-api throws it when Slack answers with ok: false.
 const platformError = (error: string) =>

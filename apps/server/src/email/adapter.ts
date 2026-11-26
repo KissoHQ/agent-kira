@@ -16,16 +16,16 @@ import {
 
 import { z } from "zod";
 
-import type { HandledMessage } from "../mastra/agents/handle-message";
+import type { HandledMessage } from "../agent/handle-message.ts";
 import {
   createReplyDelivery,
   createSerialQueue,
   defaultRetryDelaysMs,
   handleReliably,
-} from "../reliable-handling";
-import { isPermanentSmtpError } from "./errors";
-import { type ParsedEmail, parseEmail } from "./parse";
-import { checkSender, isAutomatic, type SenderCheck, type TrustSettings } from "./policy";
+} from "../reliable-handling.ts";
+import { isPermanentSmtpError } from "./errors.ts";
+import { type ParsedEmail, parseEmail } from "./parse.ts";
+import { checkSender, isAutomatic, type SenderCheck, type TrustSettings } from "./policy.ts";
 
 // The parts of the mail clients the adapter uses, so tests can replace them.
 export interface Mailbox {

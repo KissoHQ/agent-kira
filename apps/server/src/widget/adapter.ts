@@ -21,14 +21,14 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
-import type { HandledMessage } from "../mastra/agents/handle-message";
-import { statusLabels } from "../mastra/agents/reply";
+import type { HandledMessage } from "../agent/handle-message.ts";
+import { statusLabels } from "../agent/reply.ts";
 import {
   createReplyDelivery,
   createSerialQueue,
   defaultRetryDelaysMs,
   handleReliably,
-} from "../reliable-handling";
+} from "../reliable-handling.ts";
 import {
   createSlots,
   createWaitingCounter,
@@ -36,10 +36,10 @@ import {
   maxWaitingUploads,
   messageRate,
   readRate,
-} from "./admission";
-import { type AcceptedFile, acceptFiles, maxFileBytes, maxFiles } from "./files";
-import { type IdentitySecrets, verifyIdentity } from "./identity";
-import { widgetScript } from "./script";
+} from "./admission.ts";
+import { type AcceptedFile, acceptFiles, maxFileBytes, maxFiles } from "./files.ts";
+import { type IdentitySecrets, verifyIdentity } from "./identity.ts";
+import { widgetScript } from "./script.ts";
 
 export interface WidgetLogger {
   info(message: string): void;
@@ -125,7 +125,7 @@ const externalIdOf = (token: string) => createHash("sha256").update(token).diges
 
 const invalidMessage = "Le message est incomplet, ou un fichier n'est pas accepté.";
 
-// What the Node.js server of Mastra gives each request: the socket it arrived on.
+// What the Node.js server of Hono gives each request: the socket it arrived on.
 type Env = { Bindings: { incoming?: { socket: { remoteAddress?: string } } } };
 
 const busy = "Le service reçoit beaucoup de demandes. Merci de réessayer plus tard.";

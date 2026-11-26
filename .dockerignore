@@ -2,6 +2,8 @@
 # no build output, no secret and no local notes.
 **/node_modules
 **/.mastra
+**/.eve
+**/.output
 **/dist
 **/coverage
 .git

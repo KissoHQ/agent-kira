@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { maxIdentityLifetimeSeconds, signIdentity, verifyIdentity } from "./identity";
+import { maxIdentityLifetimeSeconds, signIdentity, verifyIdentity } from "./identity.ts";
 
 const portalSecret = "a-secret-shared-with-the-portal-application";
 const shopSecret = "a-secret-shared-with-the-shop-application";

@@ -2,9 +2,9 @@
 
 The widget lets the people of a client application write to the agent from the application itself: ask a question, report a bug or ask for an evolution, with files or a capture of their screen. They see the answer of the agent, the reference of their request and its status, and can reply in the same conversation. The choices behind it are recorded in [decision 011](decisions/011-web-widget.md).
 
-The widget has no business logic: it sends what the person writes to the agent server, and shows what the server answers. The agent handles a widget message like a Slack message or an email.
+The widget has no business logic: it sends what the person writes to the server, and shows what the server answers. The agent handles a widget message like a Slack message or an email.
 
-## Configuration of the agent server
+## Configuration of the server
 
 | Variable                      | Role                                                                                                                                                                                                                                                       | Example value                                              |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -13,11 +13,11 @@ The widget has no business logic: it sends what the person writes to the agent s
 | `ATTACHMENTS_DIR`             | Absolute path of the folder where the files people attach are written. The web interface of the team uses the same folder to download and delete them                                                                                                      | `/var/lib/request-agent/attachments`                       |
 | `WIDGET_ATTACHMENTS_QUOTA_MB` | Optional. Most space the attached files may take, in megabytes. Beyond, files are refused and messages without files are still taken                                                                                                                       | `2048` (default)                                           |
 | `WIDGET_TRUST_PROXY`          | Optional. `true` only behind a reverse proxy that adds the address of the person to `X-Forwarded-For`, so the limits below count people and not the proxy                                                                                                  | `false` (default)                                          |
-| `WIDGET_HOST`, `WIDGET_PORT`  | Optional. Address and port the widget listens on, apart from the Mastra server. Only this machine by default; `0.0.0.0` in a container                                                                                                                     | `127.0.0.1` and `4113` (default)                           |
+| `WIDGET_HOST`, `WIDGET_PORT`  | Optional. Address and port the widget listens on, apart from `/health` and `/ready` of the server. Only this machine by default; `0.0.0.0` in a container                                                                                                  | `127.0.0.1` and `4113` (default)                           |
 
-Restart the agent server after changing them. The log shows `Widget listening on 127.0.0.1:4113`.
+Restart the server after changing them. The log shows `Widget listening on 127.0.0.1:4113`.
 
-The widget listens on its own port, not as a route of the Mastra server: Mastra hands its routes a copy of the request without the connection, so every person would share one address and one limit, and it reads JSON bodies whole before a route can limit their size. Its own server sees the address of each person and applies its size limit before reading a body.
+The widget listens on its own port, apart from `/health` and `/ready` of the server. Its own server sees the address of each person and applies its size limit before reading a body. It first ran as routes of the Mastra server, which could do neither ([decision 011](decisions/011-web-widget.md)).
 
 ## Embedding the widget
 
@@ -77,7 +77,7 @@ The widget signs every message again with the attributes of the page, replies in
 
 ## API
 
-The script uses these routes of the widget server. They need no Mastra session, and only answer the browsers of `WIDGET_ALLOWED_ORIGINS`.
+The script uses these routes of the widget server. They need no session, and only answer the browsers of `WIDGET_ALLOWED_ORIGINS`.
 
 | Route                                        | Role                                                                                                                                                                            |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -105,7 +105,7 @@ These counts are kept in memory: the server runs as one process.
 
 ## Trying it locally
 
-1. Set the three variables in `.env`, with `http://localhost:4114` as allowed origin, then start the agent server with `pnpm dev`.
+1. Set the three variables in `.env`, with `http://localhost:4114` as allowed origin, then start the agent with `pnpm agent` and the server with `pnpm dev`.
 2. Start the demo page, the orders page of a fictitious customer portal, signed in as Bruno Leroy:
 
    ```bash
@@ -119,6 +119,6 @@ These counts are kept in memory: the server runs as one process.
 
 ## Limits
 
-- The widget listens on this machine only by default. To embed it in an application on another machine, serve `WIDGET_PORT` over HTTPS behind a reverse proxy, with `WIDGET_TRUST_PROXY=true`. The Mastra server stays on this machine: it serves only `/health` and `/ready` once built, and the rest of its API is closed.
+- The widget listens on this machine only by default. To embed it in an application on another machine, serve `WIDGET_PORT` over HTTPS behind a reverse proxy, with `WIDGET_TRUST_PROXY=true`. `/health` and `/ready` of the server stay on this machine, and the agent is reached by the server only.
 - The conversations of a person are known to the browser that sent them: another browser or cleared storage does not list them.
 - Screen capture is not available on phones: a file can be attached instead.

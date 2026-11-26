@@ -33,7 +33,7 @@ const responseSchema = z.object({
 });
 
 // Asks the model for an answer that follows a JSON schema, with the probabilities of its tokens.
-// The Mastra provider for Ollama does not return them, so the documented API is called directly.
+// The AI SDK provider for Ollama does not return them, so the documented API is called directly.
 export async function askOllama(
   options: OllamaOptions,
   request: { system: string; user: string; format: unknown },

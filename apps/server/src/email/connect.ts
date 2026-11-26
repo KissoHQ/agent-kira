@@ -3,8 +3,8 @@ import type { MailboxCursor } from "@request-agent/core";
 import { ImapFlow, type SearchObject } from "imapflow";
 import { createTransport } from "nodemailer";
 
-import { retryUntilDone } from "../retry";
-import type { Mailbox, MailSender } from "./adapter";
+import { retryUntilDone } from "../retry.ts";
+import type { Mailbox, MailSender } from "./adapter.ts";
 
 export interface MailServerSettings {
   user: string;

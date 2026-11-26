@@ -5,6 +5,12 @@ import { z } from "zod";
 const envSchema = z.object({
   OLLAMA_BASE_URL: z.url(),
   OLLAMA_MODEL: z.string().min(1),
+  // Address the server listens on. Only this machine by default: a reverse proxy or a container
+  // that publishes the widget sets it to 0.0.0.0.
+  MASTRA_HOST: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).default("127.0.0.1"),
+  ),
 });
 
 // An empty value in .env means the variable is not set.

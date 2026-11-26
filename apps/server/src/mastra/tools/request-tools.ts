@@ -116,8 +116,9 @@ export function createRequestTools(
   const updateRequestTool = createTool({
     id: "update_request",
     description:
-      "Changes the type, priority, title, summary, description or project of a request. " +
-      "The status can only be changed by a person.",
+      "Changes the type, priority, title, summary, description or project of a request that " +
+      "the sender made. A person of the team then checks the change. The status can only be " +
+      "changed by a person.",
     inputSchema: updateRequestInput,
     execute: async (input) => {
       const result = await updateRequest(db, turn, input);

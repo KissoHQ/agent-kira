@@ -8,7 +8,7 @@ import {
   storeInboundMessage,
   type TurnInput,
 } from "@request-agent/core";
-import { useAppTestDatabase, useTestDatabase } from "@request-agent/core/testing";
+import { useServerTestDatabase, useTestDatabase } from "@request-agent/core/testing";
 import type Mail from "nodemailer/lib/mailer";
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -23,7 +23,7 @@ import {
 import type { TrustSettings } from "./policy";
 
 const getDatabase = useTestDatabase();
-const getAppDatabase = useAppTestDatabase();
+const getAppDatabase = useServerTestDatabase();
 
 const address = "agent@requests.example";
 

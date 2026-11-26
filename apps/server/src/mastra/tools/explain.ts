@@ -1,9 +1,10 @@
-import type {
-  actorType,
-  eventType,
-  requestPriority,
-  requestStatus,
-  requestType,
+import {
+  type actorType,
+  type eventType,
+  type requestPriority,
+  type requestStatus,
+  type requestType,
+  wrapUntrusted,
 } from "@request-agent/core";
 
 // What the tools return, as the model reads it: the codes of the database are replaced by plain
@@ -63,7 +64,15 @@ function lookup(words: Record<string, string>, value: unknown): string | undefin
   return typeof value === "string" && Object.hasOwn(words, value) ? words[value] : undefined;
 }
 
+// Fields that hold text written by senders, or by the model from what a sender wrote. Another
+// person may have written it, so it is marked as data, like the message being handled.
+const senderTextFields = new Set(["title", "summary", "description", "question", "text"]);
+export const senderTextTag = "sender_text";
+
 function explainField(key: string, value: unknown): unknown {
+  if (senderTextFields.has(key) && typeof value === "string") {
+    return wrapUntrusted(value, senderTextTag);
+  }
   switch (key) {
     case "status": {
       return lookup(statusWords, value) ?? value;

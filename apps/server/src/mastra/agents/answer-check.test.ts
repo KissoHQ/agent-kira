@@ -133,6 +133,12 @@ describe("toPlainText", () => {
       "Statut\n- REQ-0006 : nouvelle\nfin",
     );
   });
+
+  it("removes the marks of other people's text that the model copied", () => {
+    expect(toPlainText("La demande <sender_text>Panier vide</sender_text> est en cours.")).toBe(
+      "La demande Panier vide est en cours.",
+    );
+  });
 });
 
 async function runCheckedAgent(steps: ScriptedStep[]) {

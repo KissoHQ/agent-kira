@@ -5,9 +5,9 @@ import {
   createOllamaDuplicateJudge,
   createOllamaEmbedder,
   type Database,
-  loadAppDatabaseEnv,
   loadClassifierEnv,
   loadKnowledgeEnv,
+  loadServerDatabaseEnv,
   searchKnowledge,
   type TurnInput,
 } from "@request-agent/core";
@@ -29,14 +29,14 @@ export interface ChannelHandler {
   handle: (input: TurnInput) => Promise<HandledMessage>;
 }
 
-// What every channel adapter needs: the database, with the restricted application role, and the
+// What every channel adapter needs: the database, with the restricted role of the server, and the
 // agent bound to the classifier and the knowledge base.
 export function createChannelHandler(
   agent: Agent,
   onDatabaseError: (error: Error) => void,
 ): ChannelHandler {
   const classifierEnv = loadClassifierEnv();
-  const { db } = connectDatabase(loadAppDatabaseEnv().APP_DATABASE_URL, {
+  const { db } = connectDatabase(loadServerDatabaseEnv().SERVER_DATABASE_URL, {
     onError: onDatabaseError,
   });
   const ollama = {

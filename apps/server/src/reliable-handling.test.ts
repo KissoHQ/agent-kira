@@ -4,13 +4,13 @@ import {
   messages,
   storeInboundMessage,
 } from "@request-agent/core";
-import { useAppTestDatabase, useTestDatabase } from "@request-agent/core/testing";
+import { useServerTestDatabase, useTestDatabase } from "@request-agent/core/testing";
 import { describe, expect, it } from "vitest";
 
 import { createReplyDelivery, createSerialQueue } from "./reliable-handling";
 
 const getDatabase = useTestDatabase();
-const getAppDatabase = useAppTestDatabase();
+const getAppDatabase = useServerTestDatabase();
 
 async function handledWithReply(reply: string): Promise<string> {
   const stored = await storeInboundMessage(getAppDatabase(), {

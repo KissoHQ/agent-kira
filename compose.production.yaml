@@ -2,9 +2,10 @@
 #   docker compose -f compose.production.yaml up -d --build
 # The settings come from .env, next to this file (see the Deployment part of the README). Inside this network, the database is reached as postgres:5432:
 # DATABASE_URL, APP_DATABASE_URL and SERVER_DATABASE_URL name that host. The agent server and the
-# web interface listen on this machine only: a reverse proxy serves them over HTTPS. Ollama runs
-# elsewhere, at OLLAMA_BASE_URL. Each service runs once: the agent server and the web interface
-# keep counts in memory.
+# web interface are reached through the network of Docker only, by a reverse proxy that serves them
+# over HTTPS: Traefik with Dokploy, or compose.host-proxy.yaml for a proxy installed on the server
+# itself. Ollama runs elsewhere, at OLLAMA_BASE_URL. Each service runs once: the agent server and
+# the web interface keep counts in memory.
 name: kira
 
 services:
@@ -48,16 +49,16 @@ services:
     env_file: .env
     # Set here, after .env, which cannot change them. The Mastra server, which reads every JSON body
     # whole before any check of KIRA, listens inside the container only, for its health check. The
-    # widget listens on every interface of the container, behind its published port.
+    # widget listens on every interface of the container, for the reverse proxy.
     environment:
       MASTRA_HOST: 127.0.0.1
       WIDGET_HOST: 0.0.0.0
       ATTACHMENTS_DIR: /data/attachments
     volumes:
       - attachments:/data/attachments
-    ports:
-      # The widget, served over HTTPS by the reverse proxy.
-      - "127.0.0.1:4113:4113"
+    # The widget, served over HTTPS by the reverse proxy. No port of the server is opened.
+    expose:
+      - "4113"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -78,8 +79,8 @@ services:
     volumes:
       # The interface downloads the files the widget stored, and an administrator deletes them.
       - attachments:/data/attachments
-    ports:
-      - "127.0.0.1:4112:4112"
+    expose:
+      - "4112"
     depends_on:
       migrate:
         condition: service_completed_successfully

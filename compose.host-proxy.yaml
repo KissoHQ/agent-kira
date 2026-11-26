@@ -1,0 +1,12 @@
+# For a reverse proxy installed on the server itself, such as Caddy or Nginx, and not in Docker:
+# publishes the web interface and the widget on this machine only, for the proxy to reach them.
+#   docker compose -f compose.production.yaml -f compose.host-proxy.yaml up -d --build
+# Not needed with Dokploy, whose Traefik reaches them through the network of Docker.
+services:
+  server:
+    ports:
+      - "127.0.0.1:4113:4113"
+
+  web:
+    ports:
+      - "127.0.0.1:4112:4112"

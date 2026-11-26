@@ -178,50 +178,80 @@ pnpm start
 
 KIRA runs on one server with Docker Compose, from `compose.production.yaml`: the database, a step that applies the migrations, the agent server and the web interface. Their images are built from `Dockerfile` and run as an unprivileged user. Ollama runs apart, on a machine with enough memory, ideally with a GPU: on a CPU, an answer takes from 2 to 8 minutes.
 
-1. On the server, create `.env` from `.env.example`. These variables differ from a local install:
+The web interface (port 4112) and the widget (port 4113) open no port of the server: a reverse proxy reaches them through the network of Docker and serves them over HTTPS. The Mastra server of the agent, on port 4111, listens inside its container only. KIRA needs, besides the server:
 
-   | Variable                                                                  | Value on the server                                                                                                                    |
-   | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-   | `DATABASE_URL`, `APP_DATABASE_URL`, `SERVER_DATABASE_URL`                 | Host `postgres:5432`, the database service of the Compose file, such as `postgresql://request_agent_app:…@postgres:5432/request_agent` |
-   | `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`                                       | Address of Ollama as the containers reach it, and the key of the proxy in front of it, if any                                          |
-   | `WEB_PUBLIC_ORIGIN`, `WEB_TRUST_PROXY`                                    | Address of the interface, such as `https://kira.example.com`, and `true`                                                               |
-   | `WIDGET_ALLOWED_ORIGINS`, `WIDGET_IDENTITY_SECRETS`, `WIDGET_TRUST_PROXY` | Origins and secrets of the applications that embed the widget, and `true`                                                              |
-   | `EMAIL_*`                                                                 | The real mailbox, over TLS (see [Connecting email](#connecting-email)), or removed to run without email                                |
-   | `LOCAL_MAIL_*`, `TEST_*`, `POSTGRES_PORT`                                 | Removed: they serve the local mail server, the tests and the local database only                                                       |
+- two domain names, such as `kira.example.com` for the web interface and `widget.example.com` for the widget, each with a DNS `A` record to the address of the server, created before the HTTPS certificates are requested;
+- ports 80 and 443 of the server open from the Internet, for the reverse proxy and its certificates;
+- Ollama, reachable from the server at `OLLAMA_BASE_URL`, with the models of [Installation](#installation).
 
-   `MASTRA_HOST`, `WIDGET_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file, which take precedence over `.env`.
+### Settings
 
-2. Build and start everything. The `migrate` service applies the migrations and sets the passwords of the roles; the agent server and the web interface start once it succeeded:
+These variables differ from a local install. Everything else comes from `.env.example`:
+
+| Variable                                                                  | Value on the server                                                                                                                    |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`, `APP_DATABASE_URL`, `SERVER_DATABASE_URL`                 | Host `postgres:5432`, the database service of the Compose file, such as `postgresql://request_agent_app:…@postgres:5432/request_agent` |
+| `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`                                       | Address of Ollama as the containers reach it, and the key of the proxy in front of it, if any                                          |
+| `WEB_PUBLIC_ORIGIN`, `WEB_TRUST_PROXY`                                    | Address of the interface, such as `https://kira.example.com`, and `true`                                                               |
+| `WIDGET_ALLOWED_ORIGINS`, `WIDGET_IDENTITY_SECRETS`, `WIDGET_TRUST_PROXY` | Origins and secrets of the applications that embed the widget, and `true`                                                              |
+| `EMAIL_*`                                                                 | The real mailbox, over TLS (see [Connecting email](#connecting-email)), or removed to run without email                                |
+| `LOCAL_MAIL_*`, `TEST_*`, `POSTGRES_PORT`                                 | Removed: they serve the local mail server, the tests and the local database only                                                       |
+
+`MASTRA_HOST`, `WIDGET_HOST`, `WEB_HOST`, the ports and `ATTACHMENTS_DIR` are set by the images and the Compose file, which take precedence over `.env`. Both trust settings are `true` because the reverse proxy replaces any `X-Forwarded-For` the person sends with their real address: Traefik does so by default.
+
+### With Dokploy
+
+[Dokploy](https://docs.dokploy.com/docs/core) deploys the Compose file from the repository, and its Traefik serves the domain names over HTTPS with Let's Encrypt certificates.
+
+1. Create a Docker Compose service. Source: the Git repository `https://github.com/KissoHQ/agent-kira.git`, branch `main`. Compose Path: `./compose.production.yaml`.
+2. Enter the variables of [Settings](#settings) in the environment of the service. Dokploy writes them to `.env`, next to `compose.production.yaml`, where the services read them: the deployment fails without it.
+3. Add two domains, once their DNS records point to the server:
+   - service `web`, container port `4112`, host `kira.example.com`, HTTPS on, certificate `letsencrypt`;
+   - service `server`, container port `4113`, host `widget.example.com`, HTTPS on, certificate `letsencrypt`.
+4. Deploy. Dokploy runs `docker compose -p <app name> -f compose.production.yaml up -d --build`: the migrations run first. Every later deployment, including one for a domain change, does the same.
+
+Traefik sends no one to a container whose health check fails. The health check of the agent server therefore reads `/health`, which says the process answers: the widget keeps receiving messages while Ollama is down, and the team answers them. `/ready` tells what is missing (see [Checking](#checking)).
+
+The commands below run in a terminal on the server, in the folder where Dokploy fetched the code, `/etc/dokploy/compose/<app name>/code`, with `-p <app name>` added after `docker compose`. `<app name>` is the name Dokploy shows for the service.
+
+### On another server
+
+1. Get the code on the server and create `.env` from `.env.example`, with the variables of [Settings](#settings).
+2. Build and start everything. `compose.host-proxy.yaml` publishes the two services on this machine only, for a reverse proxy installed on the server itself. The `migrate` service applies the migrations and sets the passwords of the roles; the agent server and the web interface start once it succeeded:
 
    ```bash
-   docker compose -f compose.production.yaml up -d --build
+   docker compose -f compose.production.yaml -f compose.host-proxy.yaml up -d --build
    ```
 
-3. Create the first administrator:
-
-   ```bash
-   docker compose -f compose.production.yaml run --rm -it tools node packages/core/scripts/add-staff.ts --email dana.support@team.example --name "Dana Support" --role admin
-   ```
-
-4. Put a reverse proxy with HTTPS in front of the two services, which listen on this machine only:
+3. Put a reverse proxy with HTTPS, such as Caddy or Nginx, in front of the two services:
    - the web interface, such as `https://kira.example.com`, to `127.0.0.1:4112`;
    - the widget, such as `https://widget.example.com/widget/`, to `127.0.0.1:4113`, with a body limit of 16 MB.
 
-   The Mastra server of the agent, on port 4111, is not published: it listens inside its container only, where its health check reads `/ready`.
+   It must replace the `X-Forwarded-For` the person sends with their address, or add it last.
 
-5. Check the services. `/ready` checks the database, and for the agent server the model in Ollama and the start of each channel, and answers 503 with what is missing. Its checks run at most once every 5 seconds:
+To update, get the new version and run the same `up` command.
 
-   ```bash
-   docker compose -f compose.production.yaml ps
-   docker compose -f compose.production.yaml exec server node -e "fetch('http://127.0.0.1:4111/ready').then((r) => r.text()).then(console.log)"
-   curl http://127.0.0.1:4112/ready
-   ```
+### First administrator
 
-   `ps` shows the agent server `healthy` once everything it needs is ready.
+```bash
+docker compose -f compose.production.yaml run --rm -it tools node packages/core/scripts/add-staff.ts --email dana.support@team.example --name "Dana Support" --role admin
+```
 
-To update, get the new version and run the same `up` command: the migrations run first. The logs are read with `docker compose -f compose.production.yaml logs -f server web`; `LOG_LEVEL` sets their level. Mastra sends no usage statistics: `MASTRA_TELEMETRY_DISABLED` is set.
+### Checking
 
-The maintenance commands run in the `tools` service, which `docker compose run` starts on demand, with the files of the widget writable. Daily maintenance, such as from cron, and backups of the database and of the files of the widget:
+`/ready` checks the database, and for the agent server the model in Ollama and the start of each channel, and answers 503 with what is missing. Its checks run at most once every 5 seconds:
+
+```bash
+docker compose -f compose.production.yaml ps
+docker compose -f compose.production.yaml exec server node -e "fetch('http://127.0.0.1:4111/ready').then((r) => r.text()).then(console.log)"
+docker compose -f compose.production.yaml exec web node -e "fetch('http://127.0.0.1:4112/ready').then((r) => r.text()).then(console.log)"
+```
+
+`ps` shows a service `healthy` once its process answers. The logs are read with `docker compose -f compose.production.yaml logs -f server web`; `LOG_LEVEL` sets their level. Mastra sends no usage statistics: `MASTRA_TELEMETRY_DISABLED` is set.
+
+### Maintenance
+
+The maintenance commands run in the `tools` service, which `docker compose run` starts on demand, with the files of the widget writable. Daily maintenance, such as from cron, and backups of the database and of the files of the widget. The volume of the files is `<project>_attachments`: `kira_attachments` on another server, `<app name>_attachments` with Dokploy:
 
 ```bash
 docker compose -f compose.production.yaml run --rm tools node packages/core/scripts/purge.ts
@@ -527,6 +557,7 @@ agent-kira/
 ├── .env.example                    Configuration template
 ├── compose.yaml                    Local PostgreSQL database and mail server
 ├── compose.production.yaml         KIRA on one server: database, migrations, agent server, web interface
+├── compose.host-proxy.yaml         Publishes the two services on the server, for a proxy installed on it
 ├── Dockerfile                      Images of the agent server and of the web interface
 ├── .nvmrc                          Node.js version
 ├── .oxlintrc.json                  Lint rules

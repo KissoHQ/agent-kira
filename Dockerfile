@@ -35,12 +35,13 @@ COPY --from=server-build /app/apps/server/.mastra/output ./
 # Owned by node, so a volume mounted here starts writable by the server.
 RUN mkdir -p /data/attachments && chown node:node /data/attachments
 USER node
-# Only the widget is published. The Mastra server listens inside the container, where its health
-# check reads /ready: the container shows unhealthy while the database, the model or a channel is
-# missing.
+# Only the widget is reached from outside. The Mastra server listens inside the container, where
+# its health check reads /health, which says the process answers. Not /ready: a reverse proxy such
+# as Traefik sends no one to an unhealthy container, and the widget keeps receiving messages while
+# Ollama is down, for the team to answer. /ready tells what is missing.
 EXPOSE 4113
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:4111/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:4111/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 CMD ["node", "index.mjs"]
 
 # The web interface: Node.js runs its TypeScript directly, with the production dependencies only.

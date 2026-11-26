@@ -13,7 +13,7 @@ const { values } = parseArgs({
     email: { type: "string", default: "bruno.leroy@globex.example" },
     anonymous: { type: "boolean", default: false },
     port: { type: "string", default: "4114" },
-    server: { type: "string", default: "http://localhost:4111" },
+    server: { type: "string", default: "http://localhost:4113" },
   },
 });
 

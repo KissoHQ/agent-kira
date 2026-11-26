@@ -175,6 +175,7 @@ export {
   sessionIdleMs,
 } from "./staff/sessions.ts";
 export { worksOnProjectByEmail } from "./contacts/membership.ts";
+export { addressKey } from "./limits/address-key.ts";
 export { type Admission, createRateLimiter, type RateLimit } from "./limits/rate-limiter.ts";
 export {
   addChannelLink,

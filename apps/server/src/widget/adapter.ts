@@ -1,8 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  addressKey,
   type Admission,
   conversationOrigin,
   createRateLimiter,
@@ -66,6 +67,8 @@ export interface WidgetOptions {
   retryDelaysMs?: number[];
   // Waits before writing an answer again when the database refused it.
   sendRetryDelaysMs?: number[];
+  // Waits before handling again a message whose failure could not even be recorded.
+  unrecordedRetryDelayMs?: number;
   now?: () => Date;
 }
 
@@ -105,6 +108,12 @@ const conversationToken = z.string().regex(/^[\w-]{43}$/);
 // A conversation without a message for this long is closed to its token, so a token left in a
 // browser or copied somewhere stops working. The requests themselves stay, for the team.
 export const conversationLifetimeMs = 90 * 24 * 60 * 60 * 1000;
+// A message whose handling could not even be recorded, such as while the database is down, is
+// tried again after this delay, until the database answers.
+export const unrecordedRetryDelayMs = 5 * 60 * 1000;
+// Once the files seem to fill the quota, the folder is measured again at most this often, so files
+// deleted meanwhile, such as by an erasure, give their room back without a restart.
+export const quotaRecountIntervalMs = 60 * 1000;
 
 // Kept with each message, so a reply and a message handled again after a restart keep the trust
 // and the project of the conversation.
@@ -133,7 +142,7 @@ async function folderSize(folder: string): Promise<number> {
   return sizes.reduce((total, size) => total + size, 0);
 }
 
-function fail(c: Context<Env>, status: 400 | 404 | 413 | 429 | 503, error: string) {
+function fail(c: Context<Env>, status: 400 | 404 | 413 | 429 | 500 | 503, error: string) {
   return c.json({ error }, status);
 }
 
@@ -142,15 +151,15 @@ function tooMany(c: Context<Env>, admission: Admission & { allowed: false }, err
   return fail(c, 429, error);
 }
 
-// The address the request comes from, as the limits count it.
+// The client a request comes from, as the limits count it: its address, or its IPv6 network.
 function clientAddress(c: Context<Env>, trustProxy: boolean): string {
   if (trustProxy) {
     const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
     if (forwarded !== undefined && forwarded !== "") {
-      return forwarded;
+      return addressKey(forwarded);
     }
   }
-  return c.env?.incoming?.socket.remoteAddress ?? "unknown";
+  return addressKey(c.env?.incoming?.socket.remoteAddress ?? "unknown");
 }
 
 // The values of a form field that may be repeated, such as files.
@@ -183,6 +192,9 @@ export async function createWidgetApp(options: WidgetOptions) {
   const isOver = (lastMessageAt: Date) =>
     now().getTime() - lastMessageAt.getTime() >= conversationLifetimeMs;
   let storedBytes = await folderSize(options.attachmentsDir);
+  // Room reserved by files being written, counted until they are stored or removed.
+  let reservedBytes = 0;
+  let measuredAt = now().getTime();
 
   // A person is verified only by a valid signature of the application of the project, for someone
   // who works on that project: an email typed in the widget proves nothing, and an application
@@ -253,9 +265,12 @@ export async function createWidgetApp(options: WidgetOptions) {
         await answer(input.messageId, conversation, externalId, outcome.reply);
       }
     } catch (error) {
-      // The message stays unhandled and is handled again when the server restarts.
-      waiting.release(address);
-      logger.error(`Widget message ${externalId} could not be handled`, error);
+      // Nothing could be recorded, so the message is still unhandled: it keeps its place and is
+      // tried again later, instead of waiting for a restart while its sender sees no answer.
+      logger.error(`Widget message ${externalId} could not be handled, tried again later`, error);
+      queue.later(options.unrecordedRetryDelayMs ?? unrecordedRetryDelayMs, () =>
+        process(input, conversation, externalId, address),
+      );
     }
   }
 
@@ -263,28 +278,82 @@ export async function createWidgetApp(options: WidgetOptions) {
     if (files.length > 0) {
       await mkdir(options.attachmentsDir, { recursive: true });
     }
-    return Promise.all(
-      files.map(async (file) => {
-        const storageRef = randomUUID();
-        await writeFile(join(options.attachmentsDir, storageRef), file.bytes, { flag: "wx" });
-        return {
-          filename: file.filename,
-          contentType: file.contentType,
-          sizeBytes: file.bytes.length,
-          storageRef,
-        };
-      }),
+    const saved = files.map((file) => ({
+      filename: file.filename,
+      contentType: file.contentType,
+      sizeBytes: file.bytes.length,
+      storageRef: randomUUID(),
+    }));
+    const writes = await Promise.allSettled(
+      files.map((file, index) =>
+        writeFile(join(options.attachmentsDir, saved[index]?.storageRef ?? ""), file.bytes, {
+          flag: "wx",
+        }),
+      ),
     );
+    const failed = writes.find((write) => write.status === "rejected");
+    if (failed !== undefined) {
+      await removeFiles(saved.map((file) => file.storageRef));
+      throw failed.reason;
+    }
+    return saved;
+  }
+
+  // Removes the files of a message that could not be stored, so they take no room.
+  async function removeFiles(storageRefs: string[]) {
+    const removals = await Promise.allSettled(
+      storageRefs.map((ref) => rm(join(options.attachmentsDir, ref), { force: true })),
+    );
+    for (const removal of removals) {
+      if (removal.status === "rejected") {
+        logger.error("A file of a message not stored could not be removed", removal.reason);
+      }
+    }
+  }
+
+  // Writes the files, then stores the message with them. The files are removed if the message
+  // cannot be stored.
+  async function storeWithFiles(
+    conversation: string,
+    externalId: string,
+    message: { text: string; subject: string | null; sender: string; raw: WidgetRaw },
+    files: AcceptedFile[],
+  ) {
+    const attachments = await saveFiles(files);
+    try {
+      return await storeInboundMessage(db, {
+        channel: "WIDGET",
+        conversationExternalId: conversation,
+        externalId,
+        sender: message.sender,
+        subject: message.subject,
+        bodyText: message.text,
+        raw: message.raw,
+        sentAt: now(),
+        attachments,
+      });
+    } catch (error) {
+      await removeFiles(attachments.map((file) => file.storageRef));
+      throw error;
+    }
   }
 
   // Reserves room for the files before they are written, so messages received at the same time
-  // cannot together pass the quota. False when there is not enough room left.
-  function reserveRoom(files: AcceptedFile[]): boolean {
-    const bytes = files.reduce((total, file) => total + file.bytes.length, 0);
-    if (storedBytes + bytes > options.attachmentsQuotaBytes) {
+  // cannot together pass the quota. False when there is not enough room left, even once the folder
+  // is measured again.
+  async function reserveRoom(bytes: number): Promise<boolean> {
+    if (bytes === 0) {
+      return true;
+    }
+    const fits = () => storedBytes + reservedBytes + bytes <= options.attachmentsQuotaBytes;
+    if (!fits() && now().getTime() - measuredAt >= quotaRecountIntervalMs) {
+      measuredAt = now().getTime();
+      storedBytes = await folderSize(options.attachmentsDir);
+    }
+    if (!fits()) {
       return false;
     }
-    storedBytes += bytes;
+    reservedBytes += bytes;
     return true;
   }
 
@@ -303,7 +372,8 @@ export async function createWidgetApp(options: WidgetOptions) {
     message: { text: string; subject: string | null; sender: string; raw: WidgetRaw },
     files: AcceptedFile[],
   ) {
-    if (!reserveRoom(files)) {
+    const bytes = files.reduce((total, file) => total + file.bytes.length, 0);
+    if (!(await reserveRoom(bytes))) {
       logger.error(
         "A file was refused",
         new Error(
@@ -318,17 +388,13 @@ export async function createWidgetApp(options: WidgetOptions) {
     }
     const conversation = externalIdOf(token);
     const externalId = randomUUID();
-    const stored = await storeInboundMessage(db, {
-      channel: "WIDGET",
-      conversationExternalId: conversation,
-      externalId,
-      sender: message.sender,
-      subject: message.subject,
-      bodyText: message.text,
-      raw: message.raw,
-      sentAt: now(),
-      attachments: await saveFiles(files),
-    });
+    let stored: Awaited<ReturnType<typeof storeInboundMessage>>;
+    try {
+      stored = await storeWithFiles(conversation, externalId, message, files);
+      storedBytes += bytes;
+    } finally {
+      reservedBytes -= bytes;
+    }
     const input: TurnInput = {
       messageId: stored.messageId,
       trust: message.raw.verified ? "VERIFIED" : "UNVERIFIED",
@@ -377,6 +443,12 @@ export async function createWidgetApp(options: WidgetOptions) {
   }
 
   const app = new Hono<Env>();
+  // An unexpected failure, such as the database lost, goes to the log of the server, and the person
+  // gets a message they can understand, without any detail of the failure.
+  app.onError((error, c) => {
+    logger.error("A widget request failed", error);
+    return fail(c, 500, "Votre message n'a pas pu être reçu. Merci de réessayer plus tard.");
+  });
   app.use(
     "/widget/*",
     cors({ origin: options.allowedOrigins, allowMethods: ["GET", "POST"], maxAge: 600 }),
@@ -509,6 +581,5 @@ export async function createWidgetApp(options: WidgetOptions) {
     queue.push(() => process(input, stored.conversationExternalId, stored.externalId, null));
   }
 
-  logger.info("Widget listening");
   return { app, idle: queue.idle };
 }

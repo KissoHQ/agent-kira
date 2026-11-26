@@ -9,7 +9,9 @@ export const widgetScript = String.raw`(() => {
   const base = new URL(script.src).origin;
   const data = script.dataset;
   const signedIn = (data.userSignature ?? "") !== "";
-  const storageKey = "request-widget-conversations";
+  // Each person signed in keeps their own list, so the next person on a shared computer does not
+  // see it; visitors who are not signed in share one.
+  const storageKey = "request-widget-conversations" + (signedIn ? ":" + (data.userEmail ?? "") : "");
   const pollMs = 5000;
   // The limits of the server, shown before sending so a person does not pick a fourth file.
   const maxFiles = 3;
@@ -44,6 +46,18 @@ export const widgetScript = String.raw`(() => {
     RESOLVED: ["Résolue", "green"],
     CLOSED: ["Clôturée", "gray"],
   };
+
+  // The identity the application signed for the person signed in, sent with each message.
+  function signedFields() {
+    if (!signedIn) {
+      return {};
+    }
+    return {
+      email: data.userEmail ?? "",
+      expires: data.userExpires ?? "",
+      signature: data.userSignature ?? "",
+    };
+  }
 
   function savedConversations() {
     try {
@@ -506,12 +520,8 @@ export const widgetScript = String.raw`(() => {
     }
     const identity = () => {
       const chosen = choices.map((choice) => choice.firstChild).find((radio) => radio.checked);
-      const values = { kind: chosen?.value ?? kinds[0][0] };
-      if (signedIn) {
-        values.email = data.userEmail ?? "";
-        values.expires = data.userExpires ?? "";
-        values.signature = data.userSignature ?? "";
-      } else {
+      const values = { kind: chosen?.value ?? kinds[0][0], ...signedFields() };
+      if (!signedIn) {
         values.email = email.value;
       }
       if (data.project !== undefined) {
@@ -643,7 +653,8 @@ export const widgetScript = String.raw`(() => {
       return { items, reply: [] };
     }
     const url = base + "/widget/conversations/" + token + "/messages";
-    const reply = messageForm([], messageField("Votre réponse…"), "Répondre", url, () => ({}), true);
+    // A reply is signed again, so the server knows it comes from the same person.
+    const reply = messageForm([], messageField("Votre réponse…"), "Répondre", url, signedFields, true);
     return { items, reply: [reply] };
   }
 

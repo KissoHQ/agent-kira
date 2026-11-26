@@ -133,7 +133,7 @@ The agent adds 👀 to the message, then answers in its thread with the referenc
 
 ## 5. Widget → Agent → Request
 
-1. Add to `.env` the variables of the widget, described in [`widget.md`](widget.md): `WIDGET_ALLOWED_ORIGINS=http://localhost:4114`, a `WIDGET_IDENTITY_SECRET` made with `openssl rand -hex 32`, and an absolute `ATTACHMENTS_DIR`. Restart `pnpm dev` and `pnpm web`: the log of the agent server shows `Widget listening`.
+1. Add to `.env` the variables of the widget, described in [`widget.md`](widget.md): `WIDGET_ALLOWED_ORIGINS=http://localhost:4114`, `WIDGET_IDENTITY_SECRETS=PORTAL=` followed by a secret made with `openssl rand -hex 32`, and an absolute `ATTACHMENTS_DIR`. Restart `pnpm dev` and `pnpm web`: the log of the agent server shows `Widget listening`.
 2. Start the demo page, the orders page of a fictitious customer portal, signed in as Bruno Leroy:
 
    ```bash

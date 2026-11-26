@@ -106,20 +106,60 @@ describe("loadWidgetEnv", () => {
   });
 
   it("reads the origins, and no secret when none is set", () => {
-    expect(loadWidgetEnv({ ...widget, WIDGET_IDENTITY_SECRET: "" })).toEqual({
+    expect(loadWidgetEnv({ ...widget, WIDGET_IDENTITY_SECRETS: "" })).toEqual({
       WIDGET_ALLOWED_ORIGINS: ["https://portal.example.com", "http://localhost:4114"],
-      WIDGET_IDENTITY_SECRET: undefined,
+      WIDGET_IDENTITY_SECRETS: new Map(),
       ATTACHMENTS_DIR: "/var/lib/request-agent/attachments",
+      WIDGET_TRUST_PROXY: false,
+      WIDGET_ATTACHMENTS_QUOTA_MB: 2048,
     });
+    expect(loadWidgetEnv(widget)?.WIDGET_IDENTITY_SECRETS).toEqual(new Map());
   });
 
-  it("refuses an origin with a path, a short secret or a relative folder", () => {
+  it("reads the quota of the attached files, in megabytes", () => {
+    expect(
+      loadWidgetEnv({ ...widget, WIDGET_ATTACHMENTS_QUOTA_MB: "500" })?.WIDGET_ATTACHMENTS_QUOTA_MB,
+    ).toBe(500);
+    expect(() => loadWidgetEnv({ ...widget, WIDGET_ATTACHMENTS_QUOTA_MB: "0" })).toThrow(
+      /WIDGET_ATTACHMENTS_QUOTA_MB/,
+    );
+  });
+
+  it("trusts a reverse proxy only when asked", () => {
+    expect(loadWidgetEnv({ ...widget, WIDGET_TRUST_PROXY: "true" })?.WIDGET_TRUST_PROXY).toBe(true);
+    expect(() => loadWidgetEnv({ ...widget, WIDGET_TRUST_PROXY: "maybe" })).toThrow(
+      /WIDGET_TRUST_PROXY/,
+    );
+  });
+
+  it("reads one secret per project", () => {
+    const portal = "p".repeat(32);
+    const shop = "s".repeat(40);
+
+    expect(
+      loadWidgetEnv({ ...widget, WIDGET_IDENTITY_SECRETS: ` portal=${portal} , SHOP=${shop}` })
+        ?.WIDGET_IDENTITY_SECRETS,
+    ).toEqual(
+      new Map([
+        ["PORTAL", portal],
+        ["SHOP", shop],
+      ]),
+    );
+  });
+
+  it("refuses a secret without project, a short secret or a project given twice", () => {
+    const secret = "x".repeat(32);
+    for (const value of [secret, "PORTAL=short", `PORTAL=${secret},portal=${secret}`]) {
+      expect(() => loadWidgetEnv({ ...widget, WIDGET_IDENTITY_SECRETS: value })).toThrow(
+        /WIDGET_IDENTITY_SECRETS/,
+      );
+    }
+  });
+
+  it("refuses an origin with a path or a relative folder", () => {
     expect(() =>
       loadWidgetEnv({ ...widget, WIDGET_ALLOWED_ORIGINS: "https://portal.example.com/app" }),
     ).toThrow(/WIDGET_ALLOWED_ORIGINS/);
-    expect(() => loadWidgetEnv({ ...widget, WIDGET_IDENTITY_SECRET: "short" })).toThrow(
-      /WIDGET_IDENTITY_SECRET/,
-    );
     expect(() => loadWidgetEnv({ ...widget, ATTACHMENTS_DIR: "attachments" })).toThrow(
       /ATTACHMENTS_DIR/,
     );

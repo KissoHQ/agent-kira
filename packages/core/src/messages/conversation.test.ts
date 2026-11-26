@@ -104,16 +104,17 @@ describe("readConversation", () => {
 });
 
 describe("conversationOrigin", () => {
-  it("gives the sender and the channel data of the first message", async () => {
+  it("gives the sender and the channel data of the first message, and the time of the last one", async () => {
     await storeInboundMessage(getAppDatabase(), widgetMessage("c4", "Bonjour"));
-    await storeInboundMessage(getAppDatabase(), {
-      ...widgetMessage("c4", "Encore moi"),
-      sender: "someone@else.example",
-    });
+    const second = widgetMessage("c4", "Encore moi");
+    await storeInboundMessage(getAppDatabase(), { ...second, sender: "someone@else.example" });
+    const answer = widgetMessage("c4", "Bien reçu");
+    await storeOutboundMessage(getAppDatabase(), answer);
 
     expect(await conversationOrigin(getAppDatabase(), "WIDGET", "c4")).toEqual({
       sender: bruno,
       raw: { verified: true },
+      lastMessageAt: answer.sentAt,
     });
     expect(await conversationOrigin(getAppDatabase(), "WIDGET", "none")).toBeUndefined();
   });

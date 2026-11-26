@@ -10,6 +10,7 @@ import { seedDatabase, useAppTestDatabase, useTestDatabase } from "@request-agen
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createWebApp } from "./app.ts";
+import { emailLimits } from "./sign-in-limiter.ts";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useAppTestDatabase();
@@ -131,6 +132,28 @@ describe("clients, projects and channels", () => {
     expect(await taken.text()).toContain("un autre projet");
     expect(invalid.status).toBe(400);
   });
+
+  it("keeps the key of a project, and refuses a client that does not exist", async () => {
+    const cookie = await signIn(admin);
+    const shop = (await listProjectRows(getAppDatabase())).find((row) => row.key === "SHOP");
+
+    const renamed = await post(
+      `/admin/projects/${shop?.id}`,
+      { key: "SHOP2", name: "Boutique" },
+      cookie,
+    );
+    const unknownClient = await post(
+      "/admin/projects",
+      { key: "NEW", name: "Nouveau", organizationId: "00000000-0000-4000-8000-000000000000" },
+      cookie,
+    );
+
+    expect(renamed.status).toBe(409);
+    expect(await renamed.text()).toContain("Le code d&#39;un projet ne change pas");
+    expect((await listProjectRows(getAppDatabase())).map((row) => row.key)).toContain("SHOP");
+    expect(unknownClient.status).toBe(409);
+    expect(await unknownClient.text()).toContain("Ce client n&#39;existe plus.");
+  });
 });
 
 describe("contacts", () => {
@@ -159,6 +182,29 @@ describe("contacts", () => {
     ).toMatchObject({ projectKeys: ["SHOP"], disabled: true });
   });
 
+  it("neither lists nor changes the accounts of the team, which their own page manages", async () => {
+    const cookie = await signIn(admin);
+    const dana = (await listStaff(getAppDatabase())).find((row) => row.email === member);
+
+    const page = await (await get("/admin/contacts", cookie)).text();
+    const edited = await post(
+      `/admin/contacts/${dana?.contactId}`,
+      { email: "", slackUserId: "U0DANA", name: "Dana" },
+      cookie,
+    );
+    const disabled = await post(
+      `/admin/contacts/${dana?.contactId}/disable`,
+      { disabled: "true" },
+      cookie,
+    );
+
+    expect(page).not.toContain(member);
+    expect(edited.status).toBe(409);
+    expect(await edited.text()).toContain("compte de l&#39;équipe");
+    expect(disabled.status).toBe(409);
+    expect((await post("/login", { email: member, password })).status).toBe(303);
+  });
+
   it("adds a Slack contact with no email", async () => {
     const cookie = await signIn(admin);
 
@@ -177,14 +223,22 @@ describe("accounts of the team", () => {
 
     await post(
       "/admin/staff",
-      { email: "fred@team.example", name: "Fred", role: "MEMBER", password },
+      { email: "fred@team.example", name: "Fred", role: "MEMBER", password, confirm: password },
       cookie,
     );
     const fred = (await listStaff(getAppDatabase())).find(
       (row) => row.email === "fred@team.example",
     );
-    await post(`/admin/staff/${fred?.contactId}/role`, { role: "ADMIN" }, cookie);
-    await post(`/admin/staff/${fred?.contactId}/disable`, { disabled: "true" }, cookie);
+    await post(
+      `/admin/staff/${fred?.contactId}/role`,
+      { role: "ADMIN", confirm: password },
+      cookie,
+    );
+    await post(
+      `/admin/staff/${fred?.contactId}/disable`,
+      { disabled: "true", confirm: password },
+      cookie,
+    );
 
     expect(
       (await listStaff(getAppDatabase())).find((row) => row.email === "fred@team.example"),
@@ -198,7 +252,11 @@ describe("accounts of the team", () => {
     const cookie = await signIn(admin);
     const eve = (await listStaff(getAppDatabase())).find((row) => row.email === admin);
 
-    const response = await post(`/admin/staff/${eve?.contactId}/role`, { role: "MEMBER" }, cookie);
+    const response = await post(
+      `/admin/staff/${eve?.contactId}/role`,
+      { role: "MEMBER", confirm: password },
+      cookie,
+    );
 
     expect(response.status).toBe(409);
     expect(await response.text()).toContain("Il doit rester au moins un administrateur actif.");
@@ -211,11 +269,95 @@ describe("accounts of the team", () => {
 
     await post(
       `/admin/staff/${dana?.contactId}/password`,
-      { password: "a password from the admin" },
+      { password: "a password from the admin", confirm: password },
       adminCookie,
     );
 
     expect((await get("/", memberCookie)).status).toBe(303);
+  });
+
+  it("asks the own password of the administrator before any change, and limits wrong ones", async () => {
+    const cookie = await signIn(admin);
+    const dana = (await listStaff(getAppDatabase())).find((row) => row.email === member);
+    const promote = (confirm: string) =>
+      post(`/admin/staff/${dana?.contactId}/role`, { role: "ADMIN", confirm }, cookie);
+
+    const without = await post(`/admin/staff/${dana?.contactId}/role`, { role: "ADMIN" }, cookie);
+    const statuses = [];
+    // The form without password was the first wrong attempt.
+    for (let attempt = 1; attempt < emailLimits.maxAttempts; attempt += 1) {
+      // oxlint-disable-next-line no-await-in-loop
+      statuses.push((await promote("not my password")).status);
+    }
+    const blocked = await promote(password);
+
+    expect(without.status).toBe(400);
+    expect(await without.text()).toContain("Mot de passe actuel incorrect.");
+    expect(statuses.every((status) => status === 400)).toBe(true);
+    expect(blocked.status).toBe(429);
+    expect((await listStaff(getAppDatabase())).find((row) => row.email === member)?.role).toBe(
+      "MEMBER",
+    );
+  });
+
+  it("changes the sign-in email of a member, which ends their sessions", async () => {
+    const adminCookie = await signIn(admin);
+    const memberCookie = await signIn(member);
+    const dana = (await listStaff(getAppDatabase())).find((row) => row.email === member);
+
+    const changed = await post(
+      `/admin/staff/${dana?.contactId}`,
+      { email: "dana@team.example", name: "Dana", confirm: password },
+      adminCookie,
+    );
+
+    expect(changed.status).toBe(303);
+    expect((await get("/", memberCookie)).status).toBe(303);
+    expect((await post("/login", { email: "dana@team.example", password })).status).toBe(303);
+  });
+
+  it("refuses an account on the email of a person of a client", async () => {
+    const cookie = await signIn(admin);
+
+    const refused = await post(
+      "/admin/staff",
+      {
+        email: "alice.martin@acme.example",
+        name: "Alice",
+        role: "ADMIN",
+        password,
+        confirm: password,
+      },
+      cookie,
+    );
+
+    expect(refused.status).toBe(409);
+    expect(await refused.text()).toContain("contact d&#39;un client");
+    expect((await listStaff(getAppDatabase())).map((row) => row.email)).not.toContain(
+      "alice.martin@acme.example",
+    );
+  });
+
+  it("logs who did what, without any password", async () => {
+    const events: string[] = [];
+    app = createWebApp({
+      db: getAppDatabase(),
+      timeZone: "Europe/Paris",
+      onAudit: (event) => events.push(event),
+    });
+    const cookie = await signIn(admin);
+    const dana = (await listStaff(getAppDatabase())).find((row) => row.email === member);
+
+    await post(
+      `/admin/staff/${dana?.contactId}/role`,
+      { role: "ADMIN", confirm: password },
+      cookie,
+    );
+    await post("/admin/organizations", { name: "Umbrella" }, cookie);
+
+    expect(events).toContain(`Administration by "${admin}": set the role of "${member}" to ADMIN`);
+    expect(events).toContain(`Administration by "${admin}": added the client "Umbrella"`);
+    expect(events.join("\n")).not.toContain(password);
   });
 });
 

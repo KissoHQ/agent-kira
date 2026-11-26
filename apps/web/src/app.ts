@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  addressKey,
   authenticateStaff,
   changeRequestStatus,
   changeStatusInput,
@@ -83,16 +84,20 @@ const busyRetryAfterSeconds = 5;
 const tooManyAttempts = (retryAfterMs: number) =>
   `Trop de tentatives. Réessayez dans ${Math.ceil(retryAfterMs / 60_000)} minutes.`;
 
-// The address the request comes from, as the limiter of sign-in attempts counts it.
+// The client the request comes from, as the limiter of sign-in attempts counts it: its address,
+// or its IPv6 network.
 function clientAddress(c: Context<Env>, trustProxy: boolean): string {
   if (trustProxy) {
     const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
     if (forwarded !== undefined && forwarded !== "") {
-      return forwarded;
+      return addressKey(forwarded);
     }
   }
-  return c.env?.incoming?.socket.remoteAddress ?? "unknown";
+  return addressKey(c.env?.incoming?.socket.remoteAddress ?? "unknown");
 }
+
+// A value typed by a person, quoted for the logs: a line break in it cannot write a false line.
+const quoted = (value: string) => JSON.stringify(value);
 
 // The forms of the interface are a few short fields. A larger body is refused before it is read,
 // so nobody can fill the memory of the server, even without a session.
@@ -144,9 +149,29 @@ async function readStoredFile(
   );
 }
 
-// The page to go back to after signing in: only a path of this site, never another site.
+// The page to go back to after signing in: only a path of this site, never another site. Browsers
+// drop tabs and line breaks from an address, so "/<tab>/evil.example" would lead to another site:
+// any control character, space or backslash is refused, and the path must stay on this site once
+// read as a URL.
+const thisSite = "http://this.site.invalid";
+const lastControlCharacter = 0x20;
+const deleteCharacter = 0x7f;
+// Control characters and the space are single UTF-16 units, so each unit is checked.
+const hasControlOrSpace = (value: string) =>
+  Array.from({ length: value.length }, (_, index) => value.charCodeAt(index)).some(
+    (code) => code <= lastControlCharacter || code === deleteCharacter,
+  );
 function safeNext(value: string | undefined): string {
-  return value !== undefined && /^\/(?![/\\])/.test(value) ? value : "/";
+  if (
+    value === undefined ||
+    !/^\/(?![/\\])/.test(value) ||
+    value.includes("\\") ||
+    hasControlOrSpace(value)
+  ) {
+    return "/";
+  }
+  const url = new URL(value, thisSite);
+  return url.origin === thisSite ? url.pathname + url.search + url.hash : "/";
 }
 
 // Empty form fields leave a value unchanged.
@@ -178,7 +203,7 @@ export function createWebApp(options: WebAppOptions) {
     email: string,
     next: string,
   ) => {
-    audit(`Sign-in refused for ${email}: too many attempts`);
+    audit(`Sign-in refused for ${quoted(email)}: too many attempts`);
     c.header("Retry-After", String(Math.ceil(admission.retryAfterMs / 1000)));
     return render(c, signInPage(tooManyAttempts(admission.retryAfterMs), email, next), 429);
   };
@@ -254,12 +279,13 @@ export function createWebApp(options: WebAppOptions) {
     }
     const staff = check.value;
     if (staff === undefined) {
-      audit(`Sign-in refused for ${email} from ${address}: wrong email or password`);
+      audit(`Sign-in refused for ${quoted(email)} from ${address}: wrong email or password`);
       return render(c, signInPage(invalidCredentials, email, next), 401);
     }
-    audit(`Signed in: ${email} from ${address}`);
+    audit(`Signed in: ${quoted(email)} from ${address}`);
+    // The attempt of the address is not given back: otherwise someone with an account could
+    // alternate one failure and one success, and try passwords on other accounts without limit.
     emailLimiter.clear(email);
-    addressLimiter.giveBack(address);
     // A session the browser still held ends: signing in always starts a new one.
     const previous = getCookie(c, sessionCookie, cookiePrefix);
     if (previous !== undefined) {
@@ -296,7 +322,7 @@ export function createWebApp(options: WebAppOptions) {
   });
 
   app.post("/logout", async (c) => {
-    audit(`Signed out: ${c.get("staff").email}`);
+    audit(`Signed out: ${quoted(c.get("staff").email ?? "")}`);
     await closeSession(db, c.get("sessionToken"));
     deleteCookie(c, sessionCookie, { prefix: cookiePrefix, path: "/", secure: true });
     return c.redirect("/login", 303);
@@ -437,7 +463,7 @@ export function createWebApp(options: WebAppOptions) {
     return done(c, input.data.reference.toUpperCase(), "status");
   });
 
-  registerAdministration(app, { db, view, render });
+  registerAdministration(app, { db, view, render, audit, passwordChecks, emailLimiter });
 
   app.notFound((c) => c.text("Not found", 404));
   app.onError((error, c) => {

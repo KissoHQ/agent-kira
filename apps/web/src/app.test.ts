@@ -47,6 +47,18 @@ beforeEach(async () => {
 // Where a request comes from, as the Node.js server gives it to the app.
 const fromAddress = (address: string) => ({ incoming: { socket: { remoteAddress: address } } });
 
+// A sign-in form sent from this address.
+const signInWith = (body: Record<string, string>, address: string) =>
+  app.request(
+    "/login",
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin },
+      body: new URLSearchParams(body),
+    },
+    fromAddress(address),
+  );
+
 async function post(
   path: string,
   fields: Record<string, string>,
@@ -131,13 +143,25 @@ describe("sign-in", () => {
   });
 
   it("never sends a person to another site after signing in", async () => {
-    const responses = await Promise.all(
-      ["https://evil.example", "//evil.example", "/\\evil.example"].map(async (next) =>
-        post("/login", { email, password, next }),
-      ),
-    );
+    const responses = [];
+    for (const next of [
+      "https://evil.example",
+      "//evil.example",
+      "/\\evil.example",
+      // Browsers drop tabs and line breaks from an address: these lead to evil.example.
+      "/\t/evil.example",
+      "/\n/evil.example",
+      "/\r/evil.example",
+      "/ /evil.example",
+    ]) {
+      // One after the other: each sign-in succeeds, so the attempts of the account start again.
+      // oxlint-disable-next-line no-await-in-loop
+      responses.push(await post("/login", { email, password, next }));
+    }
 
-    expect(responses.map((response) => response.headers.get("location"))).toEqual(["/", "/", "/"]);
+    expect(responses.map((response) => response.headers.get("location"))).toEqual(
+      Array.from({ length: 7 }, () => "/"),
+    );
   });
 
   it("ends the session the browser held when the person signs in again", async () => {
@@ -237,6 +261,45 @@ describe("sign-in", () => {
     expect(otherAddress.status).toBe(303);
   });
 
+  it("keeps counting an address that alternates failures and successes", async () => {
+    const address = "203.0.113.9";
+    for (let attempt = 0; attempt < addressLimits.maxAttempts; attempt += 1) {
+      // oxlint-disable-next-line no-await-in-loop
+      await signInWith(
+        attempt % 2 === 0
+          ? { email: `user-${attempt}@team.example`, password: "guess" }
+          : { email, password },
+        address,
+      );
+    }
+
+    expect((await signInWith({ email, password }, address)).status).toBe(429);
+  });
+
+  it("counts one IPv6 network as one address", async () => {
+    // Another account each time, so only the limit of the address can refuse.
+    let account = 0;
+    const signInFrom = (address: string) => {
+      account += 1;
+      return app.request(
+        "/login",
+        {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", origin },
+          body: new URLSearchParams({ email: `user-${account}@team.example`, password: "guess" }),
+        },
+        fromAddress(address),
+      );
+    };
+    for (let attempt = 0; attempt < addressLimits.maxAttempts; attempt += 1) {
+      // oxlint-disable-next-line no-await-in-loop
+      await signInFrom(`2001:db8:1:2::${(attempt + 1).toString(16)}`);
+    }
+
+    expect((await signInFrom("2001:db8:1:2:ffff::1")).status).toBe(429);
+    expect((await signInFrom("2001:db8:1:3::1")).status).toBe(401);
+  });
+
   it("counts the address added by a trusted proxy, not the one of the proxy", async () => {
     const proxied = createWebApp({
       db: getAppDatabase(),
@@ -313,8 +376,8 @@ describe("sign-in", () => {
     expect((await signInFrom("https://kira.example.com", password)).status).toBe(303);
     expect((await signInFrom("https://evil.example", password)).status).toBe(403);
     expect(events).toEqual([
-      `Sign-in refused for ${email} from unknown: wrong email or password`,
-      `Signed in: ${email} from unknown`,
+      `Sign-in refused for "${email}" from unknown: wrong email or password`,
+      `Signed in: "${email}" from unknown`,
     ]);
   });
 

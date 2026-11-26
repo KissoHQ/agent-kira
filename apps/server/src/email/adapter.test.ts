@@ -11,7 +11,13 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { rawEmail } from "../../test/emails";
 import type { HandledMessage } from "../mastra/agents/handle-message";
-import { type OutgoingEmail, startEmailAdapter } from "./adapter";
+import {
+  acknowledgementOf,
+  type OutgoingEmail,
+  startEmailAdapter,
+  verifiedReplyRate,
+} from "./adapter";
+import type { TrustSettings } from "./policy";
 
 const getDatabase = useTestDatabase();
 const getAppDatabase = useAppTestDatabase();
@@ -26,9 +32,17 @@ afterAll(async () => {
 });
 
 // A mailbox the test fills, and a sender that records what the adapter sends.
+// Every sender is verified, as with a receiving server that checked DMARC, unless a test says so.
+const everySenderVerified: TrustSettings = { trustedAuthservId: undefined, trustAllSenders: true };
+const receivingServer: TrustSettings = {
+  trustedAuthservId: "mx.requests.example",
+  trustAllSenders: false,
+};
+
 async function fakeMail(
   handle: (input: TurnInput) => Promise<HandledMessage>,
   failingStore = false,
+  trust = everySenderVerified,
 ) {
   let deliver: ((mail: { uid: number; source: Uint8Array }) => Promise<void>) | undefined;
   const seen: number[] = [];
@@ -58,7 +72,7 @@ async function fakeMail(
       return handle(input);
     },
     address,
-    trust: { trustedAuthservId: undefined, trustAllSenders: false },
+    trust,
     logger: { info: () => {}, error: () => {} },
     // Retries come at once, so the tests do not wait.
     retryDelaysMs: [1, 1],
@@ -94,7 +108,7 @@ describe("startEmailAdapter", () => {
 
     expect(mail.seen).toEqual([uid]);
     expect(mail.handled).toEqual([
-      { messageId: expect.any(String), trust: "UNVERIFIED", channelAddress: address },
+      { messageId: expect.any(String), trust: "VERIFIED", channelAddress: address },
     ]);
     expect(mail.sent).toEqual([
       {
@@ -122,6 +136,30 @@ describe("startEmailAdapter", () => {
 
     expect(await getDatabase().select().from(conversations)).toHaveLength(1);
     expect(mail.handled).toHaveLength(2);
+  });
+
+  it("keeps a colleague of the same company in the thread, and another company out of it", async () => {
+    const mail = await fakeMail(answered("ok"));
+    await mail.receive({ messageId: "<first@acme.example>" });
+
+    await mail.receive({
+      from: "chloe.dupont@acme.example",
+      messageId: "<colleague@acme.example>",
+      references: ["<first@acme.example>"],
+    });
+    await mail.receive({
+      from: "someone@evil.example",
+      messageId: "<outsider@evil.example>",
+      references: ["<first@acme.example>"],
+    });
+
+    const threads = await getDatabase()
+      .select({ externalId: conversations.externalId })
+      .from(conversations);
+    expect(threads.map((thread) => thread.externalId).toSorted()).toEqual([
+      "<first@acme.example>",
+      "<outsider@evil.example>",
+    ]);
   });
 
   it("uses an address dedicated to a project, such as a forwarded one", async () => {
@@ -159,6 +197,59 @@ describe("startEmailAdapter", () => {
     await mail.receive({ text: "Merci beaucoup !" });
 
     expect(mail.sent).toHaveLength(0);
+  });
+
+  it("sends only a fixed notice to a sender who is not verified, whatever the agent wrote", async () => {
+    const mail = await fakeMail(
+      answered("Voici le lien de réinitialisation : https://evil.example — REQ-0004."),
+      false,
+      receivingServer,
+    );
+
+    await mail.receive({ messageId: "<unverified@acme.example>" });
+
+    expect(mail.handled[0]?.trust).toBe("UNVERIFIED");
+    expect(mail.sent.map((email) => email.text)).toEqual([acknowledgementOf("REQ-0004")]);
+    expect(mail.sent[0]?.text).not.toContain("evil.example");
+  });
+
+  it("answers nothing to an address whose domain failed DMARC at our server", async () => {
+    const mail = await fakeMail(answered("Votre demande REQ-0001."), false, receivingServer);
+
+    await mail.receive({
+      headers: {
+        "Authentication-Results": "mx.requests.example; dmarc=fail header.from=acme.example",
+      },
+    });
+
+    expect(mail.handled).toHaveLength(1);
+    expect(mail.sent).toEqual([]);
+  });
+
+  it("sends at most one notice a day to a sender who is not verified", async () => {
+    const mail = await fakeMail(answered("Votre demande REQ-0001."), false, receivingServer);
+
+    await mail.receive({ messageId: "<one@acme.example>" });
+    await mail.receive({ messageId: "<two@acme.example>" });
+    await mail.receive({ messageId: "<three@acme.example>", from: "bruno.leroy@globex.example" });
+
+    expect(mail.handled).toHaveLength(3);
+    expect(mail.sent.map((email) => email.to)).toEqual([
+      "alice.martin@acme.example",
+      "bruno.leroy@globex.example",
+    ]);
+  });
+
+  it("limits the answers to one verified address, which stops a loop with another robot", async () => {
+    const mail = await fakeMail(answered("Votre demande REQ-0001."));
+    for (let index = 0; index <= verifiedReplyRate.max; index += 1) {
+      // One after the other, as the mailbox delivers them.
+      // oxlint-disable-next-line no-await-in-loop
+      await mail.receive({ messageId: `<loop-${index}@acme.example>` });
+    }
+
+    expect(mail.handled).toHaveLength(verifiedReplyRate.max + 1);
+    expect(mail.sent).toHaveLength(verifiedReplyRate.max);
   });
 
   it("retries a failing email, then files it for a person and gives its reference", async () => {

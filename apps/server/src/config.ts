@@ -53,7 +53,20 @@ const emailEnvSchema = z
   .refine((env) => !env.EMAIL_TRUST_LOCAL_SENDERS || localHosts.has(env.EMAIL_IMAP_HOST), {
     message: "EMAIL_TRUST_LOCAL_SENDERS is only allowed with a mailbox on this machine",
     path: ["EMAIL_TRUST_LOCAL_SENDERS"],
-  });
+  })
+  // Without TLS from the start, the password and the emails cross the network in clear, and the
+  // clients go on in clear if someone in between removes the offer of STARTTLS. Only the local
+  // mail server of the tests, on this machine, may do without it.
+  .refine(
+    (env) =>
+      env.EMAIL_SECURE ||
+      (localHosts.has(env.EMAIL_IMAP_HOST) && localHosts.has(env.EMAIL_SMTP_HOST)),
+    {
+      message:
+        "EMAIL_SECURE=false is only allowed with mail servers on this machine: use the TLS ports, such as 993 and 465",
+      path: ["EMAIL_SECURE"],
+    },
+  );
 
 // An origin alone, such as https://portal.example.com: no path, no trailing slash.
 const origin = z

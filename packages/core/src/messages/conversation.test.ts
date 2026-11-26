@@ -5,7 +5,7 @@ import { bruno, classified } from "../../test/fixtures.ts";
 import { seedDatabase } from "../db/seed.ts";
 import { addMessageToRequest, createRequest } from "../requests/commands.ts";
 import { prepareTurn } from "../requests/turn.ts";
-import { conversationOrigin, readConversation } from "./conversation.ts";
+import { conversationOrigin, conversationSenderDomains, readConversation } from "./conversation.ts";
 import { markHandled } from "./handling.ts";
 import { type ChannelMessage, storeInboundMessage, storeOutboundMessage } from "./inbox.ts";
 
@@ -117,5 +117,24 @@ describe("conversationOrigin", () => {
       lastMessageAt: answer.sentAt,
     });
     expect(await conversationOrigin(getAppDatabase(), "WIDGET", "none")).toBeUndefined();
+  });
+});
+
+describe("conversationSenderDomains", () => {
+  it("gives the domains of the people who wrote, once each, and nothing for an unknown one", async () => {
+    await storeInboundMessage(getAppDatabase(), widgetMessage("c5", "Bonjour"));
+    await storeInboundMessage(getAppDatabase(), {
+      ...widgetMessage("c5", "Moi aussi"),
+      sender: "chloe.durand@globex.example",
+    });
+    await storeOutboundMessage(getAppDatabase(), {
+      ...widgetMessage("c5", "Bien reçu"),
+      sender: "agent",
+    });
+
+    expect(await conversationSenderDomains(getAppDatabase(), "WIDGET", "c5")).toEqual([
+      "globex.example",
+    ]);
+    expect(await conversationSenderDomains(getAppDatabase(), "WIDGET", "none")).toBeUndefined();
   });
 });

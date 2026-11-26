@@ -92,6 +92,21 @@ describe("loadEmailEnv", () => {
   it("rejects an invalid address", () => {
     expect(() => loadEmailEnv({ ...local, EMAIL_ADDRESS: "agent" })).toThrow(/EMAIL_ADDRESS/);
   });
+
+  it("refuses to connect without TLS to a mail server on another machine", () => {
+    for (const host of [
+      { EMAIL_IMAP_HOST: "imap.gmail.com" },
+      { EMAIL_SMTP_HOST: "smtp.gmail.com" },
+    ]) {
+      expect(() => loadEmailEnv({ ...local, ...host })).toThrow(
+        /EMAIL_SECURE=false is only allowed with mail servers on this machine/,
+      );
+    }
+    expect(
+      loadEmailEnv({ ...local, EMAIL_IMAP_HOST: "imap.gmail.com", EMAIL_SECURE: "true" })
+        ?.EMAIL_SECURE,
+    ).toBe(true);
+  });
 });
 
 describe("loadWidgetEnv", () => {

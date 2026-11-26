@@ -1,8 +1,8 @@
 // Measures the agent with the real model, on the fictitious messages of agent-messages.json: how
-// many model calls each kind of message takes, and how long each call to Ollama takes on the
-// machine that runs it. The limits of the agent are set from these measures, as docs/agent.md
-// describes. It runs on a temporary database, dropped at the end, and it is slow on a CPU, so it
-// is not part of the tests. Usage: pnpm eval:agent
+// many model calls each kind of message takes, how many tokens they send and write, and how long
+// each call to Ollama takes on the machine that runs it. The limits of the agent are set from
+// these measures, as docs/agent.md describes. It runs on a temporary database, dropped at the
+// end, and it is slow on a CPU, so it is not part of the tests. Usage: pnpm eval:agent
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +18,7 @@ import {
   loadClassifierEnv,
   loadKnowledgeEnv,
   loadServerDatabaseEnv,
+  modelContextTokens,
   ollamaHeaders,
   saveArticle,
   searchKnowledge,
@@ -66,7 +67,11 @@ interface Measure {
   type: string;
   // Calls to the model in the run of the agent; 0 when the agent was not run, as for thanks.
   modelCalls: number;
+  rejectedAnswers: number;
   cutBy: AgentRun["cutBy"];
+  // Tokens each call of the agent sent to the model, and wrote.
+  promptTokens: number[];
+  answerTokens: number[];
   // Each call that classifies the message or judges a duplicate.
   classificationSeconds: number[];
   // Each call that turns a question into a vector.
@@ -83,7 +88,10 @@ function newMeasure(name: string): Measure {
     case: name,
     type: "-",
     modelCalls: 0,
+    rejectedAnswers: 0,
     cutBy: undefined,
+    promptTokens: [],
+    answerTokens: [],
     classificationSeconds: [],
     embeddingSeconds: [],
     stepSeconds: [],
@@ -129,17 +137,21 @@ function measureDatabaseUrl(testDatabaseUrl: string): string {
   return url.href;
 }
 
-const slowest = (values: number[]) => Math.max(0, ...values);
+const largest = (values: number[]) => Math.max(0, ...values);
+// Calls the step limit counts: the answers written again after a rejection are not.
+const countedSteps = (m: Measure) => m.modelCalls - m.rejectedAnswers;
 const format = (seconds: number) => `${seconds.toFixed(1)} s`;
 
 function reportMeasures(measures: Measure[]): void {
   print(
-    "\nMessage | type | model calls | limit that cut it | slowest call: classification, step | total",
+    "\nMessage | type | model calls | rejected answers | limit that cut it | largest prompt | " +
+      "slowest call: classification, step | total",
   );
   for (const m of measures) {
     print(
-      `${m.case} | ${m.type} | ${m.modelCalls} | ${m.cutBy ?? "none"} | ` +
-        `${format(slowest(m.classificationSeconds))}, ${format(slowest(m.stepSeconds))} | ${format(m.totalSeconds)}` +
+      `${m.case} | ${m.type} | ${m.modelCalls} | ${m.rejectedAnswers} | ${m.cutBy ?? "none"} | ` +
+        `${largest(m.promptTokens)} tokens | ` +
+        `${format(largest(m.classificationSeconds))}, ${format(largest(m.stepSeconds))} | ${format(m.totalSeconds)}` +
         (m.error === undefined ? "" : ` | error: ${m.error}`),
     );
   }
@@ -153,13 +165,37 @@ function checkLimit(name: string, neededSeconds: number, setMs: number): void {
   );
 }
 
+// The prompt of the agent grows at each call with what the model wrote and what the tools
+// returned. The longest run the step limit allows starts with the largest first prompt, grows by
+// the largest growth measured at each of its next calls, and ends with the longest answer.
+function reportContextWindow(measures: Measure[]): void {
+  const firstPrompt = largest(measures.map((m) => m.promptTokens[0] ?? 0));
+  const growth = largest(
+    measures.flatMap((m) =>
+      m.promptTokens.slice(1).map((tokens, call) => tokens - (m.promptTokens[call] ?? tokens)),
+    ),
+  );
+  const answer = largest(measures.flatMap((m) => m.answerTokens));
+  const nextCalls = maxAgentSteps + maxAnswerRetries - 1;
+  const needed = firstPrompt + nextCalls * growth + answer;
+  print("\nContext window, from the largest prompt and answer measured:");
+  print(
+    `  modelContextTokens = largest first prompt + ${nextCalls} x largest growth + longest answer` +
+      ` = ${firstPrompt} + ${nextCalls} x ${growth} + ${answer}: at least ${needed} tokens;` +
+      ` set to ${modelContextTokens}: ${modelContextTokens >= needed ? "enough" : "too small"}`,
+  );
+}
+
 function reportLimits(measures: Measure[], limits: HandlingLimits): void {
-  const most = measures.reduce((a, b) => (b.modelCalls > a.modelCalls ? b : a));
+  const most = measures.reduce((a, b) => (countedSteps(b) > countedSteps(a) ? b : a));
   const cut = measures.filter((m) => m.cutBy !== undefined);
   print(
     `\nStep limit: ${maxAgentSteps} steps, plus ${maxAnswerRetries} answer written again after a rejection.`,
   );
-  print(`  Most model calls for one message: ${most.modelCalls} (${most.case}).`);
+  print(
+    `  Most steps for one message, rejected answers apart: ${countedSteps(most)} (${most.case});` +
+      ` ${maxAgentSteps >= countedSteps(most) ? "enough" : "too few"}.`,
+  );
   print(
     `  Runs cut by a limit: ${cut.length === 0 ? "none" : cut.map((m) => `${m.case} (${m.cutBy})`).join(", ")}.`,
   );
@@ -167,18 +203,18 @@ function reportLimits(measures: Measure[], limits: HandlingLimits): void {
   print("\nTime limits, from the slowest call measured:");
   checkLimit(
     "CLASSIFICATION_TIMEOUT_SECONDS",
-    slowest(all((m) => m.classificationSeconds)),
+    largest(all((m) => m.classificationSeconds)),
     limits.classificationTimeoutMs,
   );
   checkLimit(
     "EMBEDDING_TIMEOUT_SECONDS",
-    slowest(all((m) => m.embeddingSeconds)),
+    largest(all((m) => m.embeddingSeconds)),
     limits.embeddingTimeoutMs,
   );
   // The longest run the step limit allows, every step as slow as the slowest one measured.
   checkLimit(
     `AGENT_TIMEOUT_SECONDS = (${maxAgentSteps} + ${maxAnswerRetries}) x slowest step`,
-    (maxAgentSteps + maxAnswerRetries) * slowest(all((m) => m.stepSeconds)),
+    (maxAgentSteps + maxAnswerRetries) * largest(all((m) => m.stepSeconds)),
     limits.agentTimeoutMs,
   );
 }
@@ -231,7 +267,7 @@ it("measures the agent with the real model", async () => {
       model: embedder.model,
       embed: (texts, kind) => timed(current.embeddingSeconds, () => embedder.embed(texts, kind)),
     };
-    // The same model as the server, which notes when each of its calls starts.
+    // The same model as the server, which notes when each of its calls starts and its tokens.
     const base = createOllama({
       baseURL: baseUrl,
       headers: apiKey === undefined ? undefined : { authorization: `Bearer ${apiKey}` },
@@ -239,9 +275,13 @@ it("measures the agent with the real model", async () => {
     const timedModel = new Proxy(base, {
       get(target, property, receiver) {
         if (property === "doGenerate") {
-          return (...args: Parameters<typeof base.doGenerate>) => {
-            current.stepStarts.push(performance.now());
-            return target.doGenerate(...args);
+          return async (...args: Parameters<typeof base.doGenerate>) => {
+            const measure = current;
+            measure.stepStarts.push(performance.now());
+            const generated = await target.doGenerate(...args);
+            measure.promptTokens.push(generated.usage.inputTokens.total ?? 0);
+            measure.answerTokens.push(generated.usage.outputTokens.total ?? 0);
+            return generated;
           };
         }
         return Reflect.get(target, property, receiver) as unknown;
@@ -286,6 +326,7 @@ it("measures the agent with the real model", async () => {
             onAgentRun: (run) => {
               const ended = performance.now();
               measure.modelCalls = run.modelCalls;
+              measure.rejectedAnswers = run.rejectedAnswers;
               measure.cutBy = run.cutBy;
               measure.stepSeconds = measure.stepStarts.map(
                 (start, step) => ((measure.stepStarts[step + 1] ?? ended) - start) / 1000,
@@ -302,6 +343,7 @@ it("measures the agent with the real model", async () => {
     }
     reportMeasures(measures);
     reportLimits(measures, limits);
+    reportContextWindow(measures);
     // A message that failed has incomplete measures, so the measure as a whole fails.
     expect(
       measures.filter((m) => m.error !== undefined).map((m) => `${m.case}: ${m.error}`),

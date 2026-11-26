@@ -19,7 +19,7 @@ The agent makes at most 8 steps per message, each one a call to the model, and 9
 Three limits stop a run of the agent that would not end:
 
 - **The step limit**: 8 calls of the model for the turn that handles the message, and 9 for the message with its rewrite. A hook of the agent counts the calls in the session of the message, which survives a restart, and stops the turn before the call that goes past the limit. The rewrite after a rejected answer is one more turn in the same session, which the limit of the message counts.
-- **The time limit**: `AGENT_TIMEOUT_SECONDS`, 900 s by default, for the whole run, its rewrite included. The agent stops the model when the time runs out. A run cut by it keeps what its tools did; the server writes the answer and files the message for a person.
+- **The time limit**: `AGENT_TIMEOUT_SECONDS`, 2000 s by default, for the whole run, its rewrite included. The agent stops the model when the time runs out. A run cut by it keeps what its tools did; the server writes the answer and files the message for a person.
 - **The context window**: 8192 tokens of text that the model reads and writes in one call. KIRA sends it with every call of the classifier and of the agent, so Ollama keeps the model loaded between them. Without it, Ollama chooses 4096 tokens on a CPU, which the prompts of the agent overflow: the model then stops in the middle of its answer. eve summarizes the conversation when it fills 90% of the window, 7373 tokens.
 
 An answer that a limit cut is never sent. The server logs a warning, with the limit that cut it, for each run stopped by one of them. Frequent warnings mean that the limits do not fit the machine that runs Ollama.
@@ -34,7 +34,7 @@ It takes about 50 minutes on a CPU, so it is not part of `pnpm test`. Measured o
 - all 12 messages were handled, no run was cut, and no message needed more than 4 steps;
 - the model wrote its answer again in 8 messages; in 4 of them, the second answer was rejected too, and the server wrote the answer;
 - the slowest classification took 70 s, under the 300 s set;
-- the slowest call of the agent took 208 s, the first one, which loads the model: 9 such calls take 1877 s, longer than the 900 s set. A run that slow is cut, answered by the server and filed for a person;
+- the slowest call of the agent took 208 s, the first one, which loads the model: 9 such calls take 1877 s, under the 2000 s set;
 - the largest prompt had 4081 tokens. The longest run allowed needs at least 7612: the 8192 set are enough, but such a run would go past 7373 tokens, where eve summarizes the conversation.
 
 ## Request types
